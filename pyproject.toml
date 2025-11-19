@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kohaku-engine"
+version = "0.0.1"
+description = "All-in-Python Config and Execution engine system for RD workload"
+authors = [
+    { name = "Shih-Ying Yeh(KohakuBlueLeaf)", email = "apolloyeh0123@gmail.com" },
+]
+license = { text = "Apache-2.0" }
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+urls = { "Homepage" = "https://github.com/KohakuBlueleaf/KohakuEngine" }
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.0",
+    "pytest-cov>=7.0.0",
+    "black>=25.0.0",
+]
+examples = [
+    "OmegaConf",
+    "toml",
+]
+
+
+[project.scripts]
+kogine = "kohakuengine.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
