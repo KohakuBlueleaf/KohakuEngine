@@ -68,16 +68,19 @@ class Parallel(ScriptWorkflow):
             List of CompletedProcess objects
         """
         processes = []
+        worker_id = 0
 
         for script in self.scripts:
             if isinstance(script.config, ConfigGenerator):
                 # For generators, we need to iterate
                 for config in script.config:
-                    proc = self._spawn_subprocess(script, config)
+                    proc = self._spawn_subprocess(script, config, worker_id)
                     processes.append(proc)
+                    worker_id += 1
             else:
-                proc = self._spawn_subprocess(script, script.config)
+                proc = self._spawn_subprocess(script, script.config, worker_id)
                 processes.append(proc)
+                worker_id += 1
 
         # Wait for all processes
         results = []
@@ -88,7 +91,7 @@ class Parallel(ScriptWorkflow):
         return results
 
     def _spawn_subprocess(
-        self, script: Script, config: Config | None
+        self, script: Script, config: Config | None, worker_id: int
     ) -> subprocess.Popen:
         """
         Spawn subprocess for script execution.
@@ -96,15 +99,23 @@ class Parallel(ScriptWorkflow):
         Strategy:
         1. Create temporary config file
         2. Launch: kogine run script.py --config temp_config.py
-        3. Return process handle
+        3. Set KOGINE_WORKER_ID environment variable
+        4. Return process handle
 
         Args:
             script: Script to execute
             config: Configuration to apply
+            worker_id: Worker ID for this process
 
         Returns:
             Popen process handle
         """
+        import os
+
+        # Set up environment with worker ID
+        env = os.environ.copy()
+        env["KOGINE_WORKER_ID"] = str(worker_id)
+
         # Create temp config file
         if config:
             temp_config = self._create_temp_config(config)
@@ -120,7 +131,7 @@ class Parallel(ScriptWorkflow):
         else:
             cmd = [sys.executable, "-m", "kohakuengine.cli", "run", str(script.path)]
 
-        return subprocess.Popen(cmd)
+        return subprocess.Popen(cmd, env=env)
 
     def _create_temp_config(self, config: Config) -> Path:
         """

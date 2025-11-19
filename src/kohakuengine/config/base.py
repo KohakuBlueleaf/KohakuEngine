@@ -58,7 +58,9 @@ class Config:
             self.args = list(self.args)
 
     @classmethod
-    def from_file(cls, config_path: str | Path) -> "Config":
+    def from_file(
+        cls, config_path: str | Path, worker_id: int | None = None
+    ) -> "Config":
         """
         Load config from Python file.
 
@@ -66,6 +68,7 @@ class Config:
 
         Args:
             config_path: Path to Python config file
+            worker_id: Optional worker ID for parallel execution
 
         Returns:
             Config or ConfigGenerator instance
@@ -74,10 +77,13 @@ class Config:
             >>> config = Config.from_file('config.py')
             >>> config.globals_dict
             {'learning_rate': 0.001}
+
+            >>> # With worker ID (for parallel execution)
+            >>> config = Config.from_file('config.py', worker_id=0)
         """
         from kohakuengine.config.loader import ConfigLoader
 
-        return ConfigLoader.load_config(config_path)
+        return ConfigLoader.load_config(config_path, worker_id=worker_id)
 
     @classmethod
     def from_dict(cls, data: dict) -> "Config":

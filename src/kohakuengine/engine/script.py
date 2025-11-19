@@ -31,8 +31,17 @@ class Script:
     run_as_main: bool = True
 
     def __post_init__(self) -> None:
-        """Validate script path."""
-        self.path = Path(self.path)
+        """Validate script path and parse entrypoint if specified."""
+        # Check if path contains entrypoint (script.py:function)
+        path_str = str(self.path)
+        if ":" in path_str:
+            script_path, entrypoint_name = path_str.rsplit(":", 1)
+            self.path = Path(script_path)
+            if self.entrypoint is None:  # Only override if not already set
+                self.entrypoint = entrypoint_name
+        else:
+            self.path = Path(self.path)
+
         if not self.path.exists():
             raise FileNotFoundError(f"Script not found: {self.path}")
         if self.path.suffix != ".py":

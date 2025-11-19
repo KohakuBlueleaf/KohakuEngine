@@ -1,6 +1,7 @@
 """Configuration loader for loading configs from Python files."""
 
 import importlib.util
+import inspect
 import sys
 from pathlib import Path
 
@@ -12,7 +13,9 @@ class ConfigLoader:
     """Load configuration from Python files."""
 
     @staticmethod
-    def load_config(config_path: str | Path) -> Config | ConfigGenerator:
+    def load_config(
+        config_path: str | Path, worker_id: int | None = None
+    ) -> Config | ConfigGenerator:
         """
         Load config from Python file.
 
@@ -55,8 +58,15 @@ class ConfigLoader:
             if not callable(config_gen):
                 raise ValueError("config_gen must be callable")
 
-            # Call config_gen
-            result = config_gen()
+            # Check if config_gen accepts worker_id parameter
+            sig = inspect.signature(config_gen)
+            params = sig.parameters
+
+            # Call config_gen with or without worker_id
+            if worker_id is not None and "worker_id" in params:
+                result = config_gen(worker_id=worker_id)
+            else:
+                result = config_gen()
 
             # Check if it's a generator or Config
             if isinstance(result, Config):
