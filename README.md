@@ -26,6 +26,32 @@ pip install -e ".[dev]"
 
 ### Basic Usage
 
+**Your Script** (`train.py`):
+```python
+# Global variables (will be overridden by config)
+learning_rate = 0.001
+batch_size = 32
+
+def main(device='cpu'):
+    print(f"Training with LR={learning_rate}, BS={batch_size}, Device={device}")
+    # Your training code here...
+    return {'loss': 0.5}
+
+if __name__ == "__main__":
+    main()
+```
+
+**Your Config** (`config.py`):
+```python
+from kohakuengine.config import Config
+
+def config_gen():
+    return Config(
+        globals_dict={'learning_rate': 0.01, 'batch_size': 64},
+        kwargs={'device': 'cuda'}
+    )
+```
+
 #### Python API
 
 ```python
@@ -41,6 +67,10 @@ result = script.run()
 
 # Or even simpler
 run('train.py', config_path='config.py')
+
+# Specify custom entrypoint
+script = Script('train.py:custom_main', config=config)
+result = script.run()
 ```
 
 #### CLI
