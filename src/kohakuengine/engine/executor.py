@@ -54,26 +54,29 @@ class ScriptExecutor:
         # Load module
         module = self._load_module()
 
-        # Apply config if provided
-        if config:
-            # Inject global variables
-            if config.globals_dict:
-                GlobalInjector.inject(module, config.globals_dict)
+        # Inject global variables if config provided
+        if config and config.globals_dict:
+            GlobalInjector.inject(module, config.globals_dict)
 
-            # Find and call entrypoint
-            entrypoint = self._find_entrypoint(module)
-            if entrypoint:
+        # Find and call entrypoint
+        entrypoint = self._find_entrypoint(module)
+        if entrypoint:
+            # Call with args/kwargs if config provided, otherwise no args
+            if config:
                 result = EntrypointFinder.call_entrypoint(
                     entrypoint, config.args, config.kwargs
                 )
-                return result
             else:
+                result = EntrypointFinder.call_entrypoint(entrypoint, [], {})
+            return result
+        else:
+            # If no entrypoint and config is expected, raise error
+            if config:
                 raise RuntimeError(
                     f"No entrypoint found in {self.script.path}. "
                     f"Expected 'if __name__ == \"__main__\"' block or main() function."
                 )
-        else:
-            # No config, just import (module-level code runs)
+            # No entrypoint and no config - just module import
             return None
 
     def _load_module(self) -> ModuleType:
