@@ -1,6 +1,7 @@
 """Entrypoint discovery and calling for scripts."""
 
 import ast
+import asyncio
 import inspect
 from pathlib import Path
 from types import ModuleType
@@ -53,9 +54,12 @@ class EntrypointFinder:
         """
         Find function called in if __name__ == "__main__" block.
 
-        Looks for pattern:
+        Looks for patterns:
             if __name__ == "__main__":
                 some_function()
+
+            if __name__ == "__main__":
+                asyncio.run(some_function())
 
         Returns function name.
         """
@@ -68,8 +72,21 @@ class EntrypointFinder:
                         if isinstance(stmt, ast.Expr) and isinstance(
                             stmt.value, ast.Call
                         ):
-                            if isinstance(stmt.value.func, ast.Name):
-                                return stmt.value.func.id
+                            call = stmt.value
+                            # Direct function call: some_function()
+                            if isinstance(call.func, ast.Name):
+                                return call.func.id
+                            # asyncio.run(func()) pattern
+                            if (
+                                isinstance(call.func, ast.Attribute)
+                                and call.func.attr == "run"
+                                and isinstance(call.func.value, ast.Name)
+                                and call.func.value.id == "asyncio"
+                                and len(call.args) >= 1
+                                and isinstance(call.args[0], ast.Call)
+                                and isinstance(call.args[0].func, ast.Name)
+                            ):
+                                return call.args[0].func.id
         return None
 
     @staticmethod
@@ -102,9 +119,10 @@ class EntrypointFinder:
         Call entrypoint with args/kwargs.
 
         Handles functions that don't accept args/kwargs gracefully.
+        Supports both sync and async functions.
 
         Args:
-            func: Function to call
+            func: Function to call (sync or async)
             args: Positional arguments
             kwargs: Keyword arguments
 
@@ -117,6 +135,12 @@ class EntrypointFinder:
             >>> result = EntrypointFinder.call_entrypoint(my_func, [5], {'y': 20})
             >>> result
             25
+
+            >>> async def async_func():
+            ...     return "async result"
+            >>> result = EntrypointFinder.call_entrypoint(async_func, [], {})
+            >>> result
+            'async result'
         """
         # Inspect function signature
         sig = inspect.signature(func)
@@ -137,5 +161,9 @@ class EntrypointFinder:
         # If function has named parameters, try to match kwargs
         if not has_var_keyword and kwargs:
             call_kwargs = {k: v for k, v in kwargs.items() if k in params}
+
+        # Check if function is async
+        if asyncio.iscoroutinefunction(func):
+            return asyncio.run(func(*call_args, **call_kwargs))
 
         return func(*call_args, **call_kwargs)

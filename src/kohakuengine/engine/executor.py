@@ -83,7 +83,9 @@ class ScriptExecutor:
         """
         Load script as Python module.
 
-        Sets __name__ to '__main__' if run_as_main=True.
+        The module is loaded with a unique name to prevent the
+        `if __name__ == "__main__"` block from executing during import.
+        The entrypoint is then called explicitly by the executor.
 
         Returns:
             Loaded module
@@ -93,10 +95,12 @@ class ScriptExecutor:
         """
         script_path = self.script.path.resolve()
 
+        # Use a unique module name to prevent __name__ == "__main__" from executing
+        # during import. The entrypoint will be called explicitly after loading.
+        module_name = f"_kohaku_script_{self.script.name}_{id(self)}"
+
         # Create module spec
-        spec = importlib.util.spec_from_file_location(
-            "__main__" if self.script.run_as_main else self.script.name, script_path
-        )
+        spec = importlib.util.spec_from_file_location(module_name, script_path)
 
         if spec is None or spec.loader is None:
             raise RuntimeError(f"Cannot load script: {script_path}")
@@ -104,23 +108,15 @@ class ScriptExecutor:
         # Create module
         module = importlib.util.module_from_spec(spec)
 
-        # Set __name__ appropriately
-        if self.script.run_as_main:
-            module.__name__ = "__main__"
-
-        # Add to sys.modules (temporary)
-        old_main = sys.modules.get("__main__")
-        sys.modules["__main__" if self.script.run_as_main else self.script.name] = (
-            module
-        )
+        # Add to sys.modules temporarily for imports within the script to work
+        sys.modules[module_name] = module
 
         try:
-            # Execute module
+            # Execute module - __name__ will NOT be "__main__" so the guard won't execute
             spec.loader.exec_module(module)
         finally:
-            # Restore old __main__ if we replaced it
-            if self.script.run_as_main and old_main is not None:
-                sys.modules["__main__"] = old_main
+            # Clean up from sys.modules
+            sys.modules.pop(module_name, None)
 
         self._module = module
         return module
