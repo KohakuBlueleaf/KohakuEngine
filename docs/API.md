@@ -45,6 +45,99 @@ config = Config(
 - `kwargs: dict[str, Any]` - Keyword arguments for entrypoint
 - `metadata: dict[str, Any]` - Optional metadata
 
+**Class Methods:**
+
+#### `Config.from_globals()`
+
+Create Config by automatically capturing caller's global variables. This is the **recommended** approach.
+
+```python
+from kohakuengine import Config
+
+learning_rate = 0.01
+batch_size = 64
+epochs = 10
+
+def config_gen():
+    return Config.from_globals()  # Captures learning_rate, batch_size, epochs
+```
+
+- Skips private variables (starting with `_`)
+- Skips modules, functions, and classes
+- Use `use()` wrapper to include functions/classes
+
+#### `Config.from_context()`
+
+Create Config from a `capture_globals()` context.
+
+```python
+from kohakuengine import Config, capture_globals
+
+with capture_globals() as ctx:
+    import numpy as np
+    learning_rate = 0.01
+    _internal = "captured too"
+
+def config_gen():
+    return Config.from_context(ctx)  # Captures everything, including np and _internal
+```
+
+#### `Config.from_file()`
+
+Load config from a Python config file.
+
+```python
+config = Config.from_file('config.py')
+config = Config.from_file('config.py', worker_id=0)  # For parallel execution
+```
+
+---
+
+### capture_globals()
+
+Context manager to capture all variables defined within a block.
+
+```python
+from kohakuengine import capture_globals, Config
+
+with capture_globals() as ctx:
+    import math
+    learning_rate = 0.01
+    _private = "included"
+
+    def helper():
+        pass
+
+def config_gen():
+    return Config.from_context(ctx)
+```
+
+**Captures everything:** modules, functions, classes, private variables - no filtering.
+
+---
+
+### use()
+
+Wrapper to mark functions/classes for inclusion in `from_globals()`.
+
+```python
+from kohakuengine import Config, use
+
+learning_rate = 0.01
+
+# Wrap functions/classes to include them
+optimizer_class = use(torch.optim.Adam)
+lr_schedule = use(lambda epoch: 0.01 * 0.95 ** epoch)
+
+class MyModel:
+    hidden_size = 256
+
+model_config = use(MyModel)
+
+def config_gen():
+    return Config.from_globals()  # Includes wrapped items
+```
+
 ---
 
 ### ConfigLoader
@@ -254,6 +347,38 @@ script = Script('train.py', config=config_gen)
 workflow = Sequential([script])
 results = workflow.run()  # Runs 3 times with different LRs
 ```
+
+### Generator with from_globals() Pattern
+
+Use `from_globals()` as base config, then override specific values in a loop:
+
+```python
+from kohakuengine import Config
+
+# Base configuration
+learning_rate = 0.01
+batch_size = 64
+epochs = 10
+optimizer = "adam"
+
+def config_gen():
+    # Get base from globals
+    base = Config.from_globals()
+
+    # Sweep over specific parameters
+    for lr in [0.001, 0.01, 0.1]:
+        for bs in [32, 64, 128]:
+            sweep_globals = base.globals_dict.copy()
+            sweep_globals["learning_rate"] = lr
+            sweep_globals["batch_size"] = bs
+
+            yield Config(
+                globals_dict=sweep_globals,
+                metadata={"lr": lr, "bs": bs}
+            )
+```
+
+This pattern lets you define defaults as normal Python variables, then override only what changes.
 
 ### Multiple Different Scripts in Parallel
 
