@@ -17,7 +17,7 @@ Or use the run() convenience function:
 
 from typing import Any
 
-from kohakuengine.config import Config
+from kohakuengine.config import Config, capture_globals, use
 from kohakuengine.engine import Script
 from kohakuengine.flow import Flow
 
@@ -26,6 +26,8 @@ __all__ = [
     "Config",
     "Script",
     "Flow",
+    "capture_globals",
+    "use",
     "run",
 ]
 

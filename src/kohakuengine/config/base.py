@@ -1,8 +1,103 @@
 """Base configuration classes for KohakuEngine."""
 
+import inspect
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import ModuleType
 from typing import Any
+
+
+class CaptureGlobals:
+    """
+    Context manager to capture global variables defined within a block.
+
+    Examples:
+        >>> with capture_globals() as ctx:
+        ...     learning_rate = 0.001
+        ...     batch_size = 32
+        >>> config = Config.from_context(ctx)
+        >>> config.globals_dict
+        {'learning_rate': 0.001, 'batch_size': 32}
+    """
+
+    def __init__(self):
+        self.captured: dict[str, Any] = {}
+        self._before: set[str] = set()
+        self._frame_globals: dict = {}
+
+    def __enter__(self) -> "CaptureGlobals":
+        frame = inspect.currentframe().f_back
+        self._frame_globals = frame.f_globals
+        self._before = set(frame.f_globals.keys())
+        return self
+
+    def __exit__(self, *args) -> bool:
+        # Capture ALL new variables - no filtering
+        after = set(self._frame_globals.keys())
+        new_vars = after - self._before
+
+        for name in new_vars:
+            self.captured[name] = self._frame_globals[name]
+
+        return False
+
+
+def capture_globals() -> CaptureGlobals:
+    """
+    Create a context manager to capture global variables.
+
+    Returns:
+        CaptureGlobals context manager
+
+    Examples:
+        >>> with capture_globals() as ctx:
+        ...     learning_rate = 0.001
+        ...     batch_size = 32
+        >>> config = Config.from_context(ctx)
+    """
+    return CaptureGlobals()
+
+
+class Use:
+    """
+    Wrapper to mark functions/classes for inclusion in config capture.
+
+    By default, from_globals() skips functions and classes.
+    Wrap them with use() to include them.
+
+    Examples:
+        >>> from kohakuengine import Config, use
+        >>>
+        >>> learning_rate = 0.001
+        >>> my_func = use(some_function)
+        >>> MyModel = use(SomeModelClass)
+        >>>
+        >>> def config_gen():
+        ...     return Config.from_globals()
+    """
+
+    def __init__(self, value: Any):
+        self.value = value
+
+    def __repr__(self) -> str:
+        return f"use({self.value!r})"
+
+
+def use(value: Any) -> Use:
+    """
+    Mark a function/class for inclusion in config capture.
+
+    Args:
+        value: Function or class to include
+
+    Returns:
+        Use wrapper
+
+    Examples:
+        >>> my_func = use(some_function)
+        >>> MyModel = use(SomeModelClass)
+    """
+    return Use(value)
 
 
 @dataclass
@@ -104,3 +199,72 @@ class Config:
         from kohakuengine.config.loader import ConfigLoader
 
         return ConfigLoader.load_from_dict(data)
+
+    @classmethod
+    def from_context(cls, context: CaptureGlobals) -> "Config":
+        """
+        Create Config from captured globals context.
+
+        Args:
+            context: CaptureGlobals context manager
+
+        Returns:
+            Config instance
+
+        Examples:
+            >>> with capture_globals() as ctx:
+            ...     learning_rate = 0.001
+            ...     batch_size = 32
+            >>> config = Config.from_context(ctx)
+            >>> config.globals_dict
+            {'learning_rate': 0.001, 'batch_size': 32}
+        """
+        return cls(globals_dict=context.captured)
+
+    @classmethod
+    def from_globals(cls) -> "Config":
+        """
+        Create Config from caller's global variables.
+
+        Captures all user-defined globals (excludes private, modules,
+        functions, classes, and common imports).
+
+        Returns:
+            Config instance
+
+        Examples:
+            >>> # In config.py:
+            >>> learning_rate = 0.001
+            >>> batch_size = 32
+            >>>
+            >>> def config_gen():
+            ...     return Config.from_globals()
+        """
+        frame = inspect.currentframe().f_back
+        user_globals = {}
+
+        for name, value in frame.f_globals.items():
+            # Skip private/protected
+            if name.startswith("_"):
+                continue
+
+            # Skip modules
+            if isinstance(value, ModuleType):
+                continue
+
+            # Handle Use wrapper - unwrap and include
+            if isinstance(value, Use):
+                user_globals[name] = value.value
+                continue
+
+            # Skip types/classes (unless wrapped with use())
+            if isinstance(value, type):
+                continue
+
+            # Skip callables/functions (unless wrapped with use())
+            if callable(value):
+                continue
+
+            user_globals[name] = value
+
+        return cls(globals_dict=user_globals)
