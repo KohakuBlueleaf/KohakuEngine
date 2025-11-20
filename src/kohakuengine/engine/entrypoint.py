@@ -35,7 +35,7 @@ class EntrypointFinder:
             True
         """
         # Parse AST to find if __name__ == "__main__" block
-        with open(script_path) as f:
+        with open(script_path, encoding="utf-8") as f:
             tree = ast.parse(f.read(), filename=str(script_path))
 
         entrypoint_name = EntrypointFinder._find_main_block_function(tree)

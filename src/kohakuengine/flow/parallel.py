@@ -147,7 +147,7 @@ class Parallel(ScriptWorkflow):
         fd, path = tempfile.mkstemp(suffix=".py", prefix="kogine_config_")
 
         # Write config
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write(
                 f"""
 from kohakuengine.config import Config
