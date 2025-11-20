@@ -1,5 +1,8 @@
 """Script representation for KohakuEngine."""
 
+import subprocess
+import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -67,7 +70,7 @@ class Script:
         config_type = type(self.config).__name__ if self.config else "None"
         return f"Script(path={self.path}, config={config_type})"
 
-    def run(self, config: Config | None = None) -> Any:
+    def run(self, config: Config | None = None, use_subprocess: bool = False) -> Any:
         """
         Execute the script.
 
@@ -75,15 +78,87 @@ class Script:
 
         Args:
             config: Optional config to override script's config
+            use_subprocess: If True, run in subprocess (useful for asyncio scripts)
 
         Returns:
-            Script execution result
+            Script execution result (or CompletedProcess if use_subprocess=True)
 
         Examples:
             >>> script = Script('train.py', config=Config(globals_dict={'lr': 0.001}))
             >>> result = script.run()
+
+            >>> # Use subprocess for asyncio scripts
+            >>> result = script.run(use_subprocess=True)
         """
+        if use_subprocess:
+            return self._run_subprocess(config)
+
         from kohakuengine.engine.executor import ScriptExecutor
 
         executor = ScriptExecutor(self)
         return executor.execute(config)
+
+    def _run_subprocess(
+        self, config: Config | None = None
+    ) -> subprocess.CompletedProcess:
+        """
+        Execute script in subprocess.
+
+        Args:
+            config: Configuration to apply
+
+        Returns:
+            CompletedProcess object
+        """
+        import os
+
+        config = config or self.config
+        env = os.environ.copy()
+        env["KOGINE_WORKER_ID"] = "0"
+
+        if config and not isinstance(config, ConfigGenerator):
+            temp_config = self._create_temp_config(config)
+            cmd = [
+                sys.executable,
+                "-m",
+                "kohakuengine.cli",
+                "run",
+                str(self.path),
+                "--config",
+                str(temp_config),
+            ]
+        else:
+            cmd = [sys.executable, "-m", "kohakuengine.cli", "run", str(self.path)]
+
+        proc = subprocess.Popen(cmd, env=env)
+        proc.wait()
+        return proc
+
+    def _create_temp_config(self, config: Config) -> Path:
+        """
+        Create temporary Python config file.
+
+        Args:
+            config: Config to serialize
+
+        Returns:
+            Path to temporary config file
+        """
+        fd, path = tempfile.mkstemp(suffix=".py", prefix="kogine_config_")
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(
+                f"""
+from kohakuengine.config import Config
+
+def config_gen():
+    return Config(
+        globals_dict={config.globals_dict!r},
+        args={config.args!r},
+        kwargs={config.kwargs!r},
+        metadata={config.metadata!r}
+    )
+"""
+            )
+
+        return Path(path)

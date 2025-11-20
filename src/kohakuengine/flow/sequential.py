@@ -1,5 +1,9 @@
 """Sequential workflow execution."""
 
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from kohakuengine.config.base import Config
@@ -17,6 +21,7 @@ class Sequential(ScriptWorkflow):
     - Static configs (Config)
     - Iterative configs (ConfigGenerator)
     - Multiple scripts with independent configs
+    - Subprocess mode for asyncio scripts
 
     Examples:
         >>> scripts = [
@@ -25,7 +30,22 @@ class Sequential(ScriptWorkflow):
         ... ]
         >>> workflow = Sequential(scripts)
         >>> results = workflow.run()
+
+        >>> # Use subprocess mode for asyncio scripts
+        >>> workflow = Sequential(scripts, use_subprocess=True)
+        >>> results = workflow.run()
     """
+
+    def __init__(self, scripts: list[Script], use_subprocess: bool = False):
+        """
+        Initialize sequential workflow.
+
+        Args:
+            scripts: List of scripts to execute
+            use_subprocess: If True, run each script in a subprocess
+        """
+        super().__init__(scripts)
+        self.use_subprocess = use_subprocess
 
     def run(self) -> list[Any]:
         """
@@ -64,8 +84,75 @@ class Sequential(ScriptWorkflow):
         Returns:
             Script execution result
         """
+        if self.use_subprocess:
+            return self._run_subprocess(script, config)
         executor = ScriptExecutor(script)
         return executor.execute(config)
+
+    def _run_subprocess(
+        self, script: Script, config: Config | None
+    ) -> subprocess.CompletedProcess:
+        """
+        Execute script in subprocess.
+
+        Args:
+            script: Script to execute
+            config: Configuration to apply
+
+        Returns:
+            CompletedProcess object
+        """
+        import os
+
+        env = os.environ.copy()
+        env["KOGINE_WORKER_ID"] = "0"
+
+        if config:
+            temp_config = self._create_temp_config(config)
+            cmd = [
+                sys.executable,
+                "-m",
+                "kohakuengine.cli",
+                "run",
+                str(script.path),
+                "--config",
+                str(temp_config),
+            ]
+        else:
+            cmd = [sys.executable, "-m", "kohakuengine.cli", "run", str(script.path)]
+
+        proc = subprocess.Popen(cmd, env=env)
+        proc.wait()
+        return proc
+
+    def _create_temp_config(self, config: Config) -> Path:
+        """
+        Create temporary Python config file.
+
+        Args:
+            config: Config to serialize
+
+        Returns:
+            Path to temporary config file
+        """
+        fd, path = tempfile.mkstemp(suffix=".py", prefix="kogine_config_")
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(
+                f"""
+from kohakuengine.config import Config
+
+def config_gen():
+    return Config(
+        globals_dict={config.globals_dict!r},
+        args={config.args!r},
+        kwargs={config.kwargs!r},
+        metadata={config.metadata!r}
+    )
+"""
+            )
+
+        return Path(path)
 
     def _run_iterative(self, script: Script) -> list[Any]:
         """

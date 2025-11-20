@@ -36,7 +36,7 @@ class Flow:
         mode: str = "sequential",
         executor_class: type | None = None,
         max_workers: int | None = None,
-        use_subprocess: bool = True,
+        use_subprocess: bool | None = None,
     ):
         """
         Initialize workflow.
@@ -54,6 +54,10 @@ class Flow:
         self.scripts = scripts
         self.mode = mode
         self.max_workers = max_workers
+
+        # Set default use_subprocess based on mode if not specified
+        if use_subprocess is None:
+            use_subprocess = True if mode == "parallel" else False
         self.use_subprocess = use_subprocess
 
         # Create executor
@@ -63,13 +67,15 @@ class Flow:
                 self._executor = executor_class(
                     scripts, max_workers=max_workers, use_subprocess=use_subprocess
                 )
+            elif executor_class == Sequential:
+                self._executor = executor_class(scripts, use_subprocess=use_subprocess)
             else:
                 self._executor = executor_class(scripts)
         else:
             # Use mode to select executor
             match mode:
                 case "sequential":
-                    self._executor = Sequential(scripts)
+                    self._executor = Sequential(scripts, use_subprocess=use_subprocess)
                 case "parallel":
                     self._executor = Parallel(
                         scripts, max_workers=max_workers, use_subprocess=use_subprocess

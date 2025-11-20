@@ -3,7 +3,7 @@
 import subprocess
 import sys
 import tempfile
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -67,26 +67,36 @@ class Parallel(ScriptWorkflow):
         Returns:
             List of CompletedProcess objects
         """
-        processes = []
+        # Collect all tasks to execute
+        tasks = []
         worker_id = 0
 
         for script in self.scripts:
             if isinstance(script.config, ConfigGenerator):
                 # For generators, we need to iterate
                 for config in script.config:
-                    proc = self._spawn_subprocess(script, config, worker_id)
-                    processes.append(proc)
+                    tasks.append((script, config, worker_id))
                     worker_id += 1
             else:
-                proc = self._spawn_subprocess(script, script.config, worker_id)
-                processes.append(proc)
+                tasks.append((script, script.config, worker_id))
                 worker_id += 1
 
-        # Wait for all processes
-        results = []
-        for proc in processes:
+        def run_task(task):
+            script, config, wid = task
+            proc = self._spawn_subprocess(script, config, wid)
             proc.wait()
-            results.append(proc)
+            return proc
+
+        # Use ThreadPoolExecutor to limit concurrent subprocesses
+        import os
+
+        max_workers = self.max_workers or os.cpu_count() or 1
+
+        results = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(run_task, task) for task in tasks]
+            for future in as_completed(futures):
+                results.append(future.result())
 
         return results
 
