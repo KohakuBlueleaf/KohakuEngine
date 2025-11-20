@@ -74,3 +74,138 @@ def test_executor_config_override(simple_script):
     # Override with different config at execution time
     override_config = Config(globals_dict={"value": 2})
     executor.execute(override_config)
+
+
+def test_executor_no_double_execution(tmp_path):
+    """Test that if __name__ == '__main__' does NOT execute during import.
+
+    This is critical - the entrypoint should only be called ONCE by the executor,
+    not during the import phase.
+    """
+    script_file = tmp_path / "count_script.py"
+    script_file.write_text(
+        """
+execution_count = 0
+
+def main():
+    global execution_count
+    execution_count += 1
+    return execution_count
+
+if __name__ == "__main__":
+    main()
+"""
+    )
+
+    script = Script(script_file)
+    executor = ScriptExecutor(script)
+
+    result = executor.execute()
+
+    # The main() should only be called ONCE by the executor
+    # If the guard executed during import, this would be 2
+    assert (
+        result == 1
+    ), f"Expected 1 execution, got {result}. Main guard executed during import!"
+    assert executor.module.execution_count == 1
+
+
+def test_executor_explicit_entrypoint(tmp_path):
+    """Test that user can specify a custom entrypoint function."""
+    script_file = tmp_path / "multi_entry.py"
+    script_file.write_text(
+        """
+def train():
+    return "trained"
+
+def evaluate():
+    return "evaluated"
+
+def main():
+    return "main"
+
+if __name__ == "__main__":
+    main()
+"""
+    )
+
+    # Test custom entrypoint via constructor
+    script = Script(script_file, entrypoint="evaluate")
+    result = script.run()
+    assert result == "evaluated"
+
+    # Test custom entrypoint via path syntax
+    script = Script(f"{script_file}:train")
+    result = script.run()
+    assert result == "trained"
+
+
+def test_executor_async_entrypoint(tmp_path):
+    """Test that async functions work as entrypoints."""
+    script_file = tmp_path / "async_script.py"
+    script_file.write_text(
+        """
+import asyncio
+
+async def main():
+    await asyncio.sleep(0.001)
+    return "async success"
+
+if __name__ == "__main__":
+    asyncio.run(main())
+"""
+    )
+
+    script = Script(script_file)
+    executor = ScriptExecutor(script)
+
+    result = executor.execute()
+    assert result == "async success"
+
+
+def test_executor_async_with_args(tmp_path):
+    """Test async entrypoint with arguments."""
+    script_file = tmp_path / "async_args.py"
+    script_file.write_text(
+        """
+import asyncio
+
+async def process(x, y=10):
+    await asyncio.sleep(0.001)
+    return x + y
+
+if __name__ == "__main__":
+    asyncio.run(process(5))
+"""
+    )
+
+    config = Config(args=[20], kwargs={"y": 30})
+    script = Script(script_file, config=config)
+
+    result = script.run()
+    assert result == 50
+
+
+def test_executor_async_explicit_entrypoint(tmp_path):
+    """Test explicit async entrypoint selection."""
+    script_file = tmp_path / "async_multi.py"
+    script_file.write_text(
+        """
+import asyncio
+
+async def fetch_data():
+    await asyncio.sleep(0.001)
+    return "fetched"
+
+async def process_data():
+    await asyncio.sleep(0.001)
+    return "processed"
+
+if __name__ == "__main__":
+    asyncio.run(fetch_data())
+"""
+    )
+
+    script = Script(script_file, entrypoint="process_data")
+    result = script.run()
+    assert result == "processed"

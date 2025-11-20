@@ -14,7 +14,7 @@ def test_script_creation(simple_script):
     assert script.path.exists()
     assert script.name == "simple_script"
     assert script.config is None
-    assert script.run_as_main is True
+    assert script.entrypoint is None
 
 
 def test_script_with_config(simple_script):
