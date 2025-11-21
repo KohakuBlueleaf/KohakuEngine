@@ -32,12 +32,16 @@ class CaptureGlobals:
         return self
 
     def __exit__(self, *args) -> bool:
-        # Capture ALL new variables - no filtering
+        # Capture ALL new variables - no filtering (except the context itself)
         after = set(self._frame_globals.keys())
         new_vars = after - self._before
 
         for name in new_vars:
-            self.captured[name] = self._frame_globals[name]
+            value = self._frame_globals[name]
+            # Skip the context variable itself to avoid self-capture
+            if value is self:
+                continue
+            self.captured[name] = value
 
         return False
 
