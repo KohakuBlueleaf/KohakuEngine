@@ -223,7 +223,7 @@ class Config:
             >>> config.globals_dict
             {'learning_rate': 0.001, 'batch_size': 32}
         """
-        return cls(globals_dict=context.captured)
+        return cls(globals_dict=dict(context.captured))
 
     @classmethod
     def from_globals(cls) -> "Config":
