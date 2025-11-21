@@ -209,3 +209,60 @@ if __name__ == "__main__":
     script = Script(script_file, entrypoint="process_data")
     result = script.run()
     assert result == "processed"
+
+
+def test_executor_no_entrypoint_no_config_returns_none(tmp_path):
+    """Test that executor returns None when no entrypoint and no config."""
+    script_file = tmp_path / "no_entry.py"
+    script_file.write_text(
+        """
+# Just a module with no entrypoint
+x = 10
+y = 20
+"""
+    )
+
+    script = Script(script_file)
+    executor = ScriptExecutor(script)
+
+    result = executor.execute()
+    assert result is None
+
+
+def test_executor_invalid_entrypoint_name(tmp_path):
+    """Test error when specified entrypoint doesn't exist."""
+    script_file = tmp_path / "script.py"
+    script_file.write_text(
+        """
+def main():
+    return "main"
+
+if __name__ == "__main__":
+    main()
+"""
+    )
+
+    script = Script(script_file, entrypoint="nonexistent")
+    executor = ScriptExecutor(script)
+
+    with pytest.raises(ValueError, match="Specified entrypoint.*not found"):
+        executor.execute()
+
+
+def test_executor_module_loading_error(tmp_path):
+    """Test error handling when module cannot be loaded."""
+    # Create a file that will fail to load as a Python module
+    # This is hard to trigger, but we can test the path
+    # by creating a script that raises an exception during import
+    script_file = tmp_path / "bad_import.py"
+    script_file.write_text(
+        """
+raise ImportError("Forced import error")
+"""
+    )
+
+    script = Script(script_file)
+    executor = ScriptExecutor(script)
+
+    with pytest.raises(ImportError, match="Forced import error"):
+        executor.execute()

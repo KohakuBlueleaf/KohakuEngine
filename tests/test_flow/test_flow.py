@@ -55,3 +55,86 @@ def test_flow_repr(simple_script):
     assert "Flow" in repr_str
     assert "scripts=3" in repr_str
     assert "mode=sequential" in repr_str
+
+
+def test_flow_parallel_mode(simple_script):
+    """Test Flow with parallel mode."""
+    scripts = [Script(simple_script) for _ in range(2)]
+
+    flow = Flow(scripts, mode="parallel", use_subprocess=False)
+    results = flow.run()
+
+    assert len(results) == 2
+    assert all(r == "success" for r in results)
+
+
+def test_flow_parallel_mode_with_workers(simple_script):
+    """Test Flow with parallel mode and max_workers."""
+    scripts = [Script(simple_script) for _ in range(2)]
+
+    flow = Flow(scripts, mode="parallel", max_workers=2, use_subprocess=False)
+    results = flow.run()
+
+    assert len(results) == 2
+
+
+def test_flow_custom_executor_parallel(simple_script):
+    """Test Flow with custom Parallel executor class."""
+    from kohakuengine.flow.parallel import Parallel
+
+    scripts = [Script(simple_script) for _ in range(2)]
+
+    flow = Flow(scripts, executor_class=Parallel, max_workers=2, use_subprocess=False)
+    results = flow.run()
+
+    assert len(results) == 2
+
+
+def test_flow_custom_executor_sequential(simple_script):
+    """Test Flow with custom Sequential executor class."""
+    from kohakuengine.flow.sequential import Sequential
+
+    scripts = [Script(simple_script) for _ in range(2)]
+
+    flow = Flow(scripts, executor_class=Sequential)
+    results = flow.run()
+
+    assert len(results) == 2
+
+
+def test_flow_custom_executor_other(simple_script):
+    """Test Flow with custom executor class that's neither Parallel nor Sequential."""
+    from kohakuengine.flow.base import ScriptWorkflow
+
+    # Create a simple custom executor
+    class CustomExecutor(ScriptWorkflow):
+        def run(self):
+            return ["custom"] * len(self.scripts)
+
+        def validate(self):
+            return True
+
+    scripts = [Script(simple_script)]
+
+    flow = Flow(scripts, executor_class=CustomExecutor)
+    results = flow.run()
+
+    assert results == ["custom"]
+
+
+def test_flow_parallel_subprocess_default(simple_script):
+    """Test that parallel mode defaults to use_subprocess=True."""
+    scripts = [Script(simple_script)]
+
+    flow = Flow(scripts, mode="parallel")
+    # Should default to subprocess mode
+    assert flow.use_subprocess is True
+
+
+def test_flow_sequential_subprocess_false_default(simple_script):
+    """Test that sequential mode defaults to use_subprocess=False."""
+    scripts = [Script(simple_script)]
+
+    flow = Flow(scripts, mode="sequential")
+    # Should default to no subprocess
+    assert flow.use_subprocess is False
