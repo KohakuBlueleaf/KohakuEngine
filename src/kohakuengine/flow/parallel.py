@@ -14,6 +14,23 @@ from kohakuengine.engine.script import Script
 from kohakuengine.flow.base import ScriptWorkflow
 
 
+def _execute_script_helper(script: Script, config: Config | None) -> Any:
+    """
+    Helper function for parallel execution.
+
+    Must be at module level to be picklable for ProcessPoolExecutor.
+
+    Args:
+        script: Script to execute
+        config: Configuration to apply
+
+    Returns:
+        Execution result
+    """
+    executor = ScriptExecutor(script)
+    return executor.execute(config)
+
+
 class Parallel(ScriptWorkflow):
     """
     Execute scripts in parallel using subprocesses.
@@ -184,11 +201,6 @@ def config_gen():
         Returns:
             List of execution results
         """
-
-        def execute_script(script: Script, config: Config | None) -> Any:
-            executor = ScriptExecutor(script)
-            return executor.execute(config)
-
         results = []
 
         with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
@@ -197,10 +209,20 @@ def config_gen():
             for script in self.scripts:
                 if isinstance(script.config, ConfigGenerator):
                     for config in script.config:
-                        future = executor.submit(execute_script, script, config)
+                        # Create new script instance without generator to avoid pickling issues
+                        script_copy = Script(
+                            path=script.path,
+                            config=None,  # Pass config separately
+                            entrypoint=script.entrypoint,
+                        )
+                        future = executor.submit(
+                            _execute_script_helper, script_copy, config
+                        )
                         futures.append(future)
                 else:
-                    future = executor.submit(execute_script, script, script.config)
+                    future = executor.submit(
+                        _execute_script_helper, script, script.config
+                    )
                     futures.append(future)
 
             for future in as_completed(futures):
