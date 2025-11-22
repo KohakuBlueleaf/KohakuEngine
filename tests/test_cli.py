@@ -10,7 +10,9 @@ import pytest
 def run_cli(*args, check=True):
     """Helper to run CLI commands."""
     cmd = [sys.executable, "-m", "kohakuengine.cli"] + list(args)
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, encoding="utf-8", check=False
+    )
     if check and result.returncode != 0:
         raise subprocess.CalledProcessError(
             result.returncode, cmd, result.stdout, result.stderr

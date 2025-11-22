@@ -2,7 +2,7 @@
 KohakuEngine CLI.
 
 Usage:
-    kogine run SCRIPT [--config CONFIG] [options]
+    kogine run SCRIPT [--config CONFIG] [--subprocess] [options]
     kogine workflow sequential SCRIPT... [--config CONFIG]
     kogine workflow parallel SCRIPT... [--config CONFIG] [--workers N]
     kogine config validate CONFIG
@@ -23,6 +23,18 @@ from kohakuengine.flow import Parallel, Sequential
 
 def main() -> None:
     """CLI entry point."""
+    # Ensure UTF-8 encoding for stdout/stderr on Windows
+    import io
+
+    if sys.stdout.encoding != "utf-8":
+        sys.stdout = io.TextIOWrapper(
+            sys.stdout.buffer, encoding="utf-8", errors="replace"
+        )
+    if sys.stderr.encoding != "utf-8":
+        sys.stderr = io.TextIOWrapper(
+            sys.stderr.buffer, encoding="utf-8", errors="replace"
+        )
+
     parser = create_parser()
     args = parser.parse_args()
 
@@ -54,6 +66,11 @@ def create_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("script", help="Path to script")
     run_parser.add_argument("--config", "-c", help="Path to config file")
     run_parser.add_argument("--entrypoint", "-e", help="Entrypoint function name")
+    run_parser.add_argument(
+        "--subprocess",
+        action="store_true",
+        help="Run in subprocess (useful for asyncio scripts or config generators)",
+    )
     run_parser.set_defaults(func=cmd_run)
 
     # workflow command
@@ -108,13 +125,25 @@ def cmd_run(args: argparse.Namespace) -> None:
     # Create script
     script = Script(args.script, config=config, entrypoint=args.entrypoint)
 
-    # Execute
-    executor = ScriptExecutor(script)
-    result = executor.execute()
+    # Handle ConfigGenerator specially - use Sequential for ordered execution
+    if isinstance(config, ConfigGenerator):
+        print(f"✓ Config is a generator, running sequentially...")
+        use_subprocess = getattr(args, "subprocess", False)
+        workflow = Sequential([script], use_subprocess=use_subprocess)
+        results = workflow.run()
+        print(f"✓ Script executed successfully ({len(results)} iterations)")
+        sys.exit(0)
 
-    print("✓ Script executed successfully")
-    if result is not None:
-        print(f"Return value: {result}")
+    # Single config execution
+    if getattr(args, "subprocess", False):
+        result = script.run(use_subprocess=True)
+        print("✓ Script executed successfully (subprocess)")
+    else:
+        executor = ScriptExecutor(script)
+        result = executor.execute()
+        print("✓ Script executed successfully")
+        if result is not None:
+            print(f"Return value: {result}")
 
     sys.exit(0)
 
