@@ -50,6 +50,34 @@ class EntrypointFinder:
         return None
 
     @staticmethod
+    def find_entrypoint_for_module(module: ModuleType) -> Callable | None:
+        """
+        Find entrypoint function in an importable module.
+
+        For modules loaded via import, we cannot rely on AST parsing of the
+        `if __name__ == "__main__"` block since it won't execute. Instead:
+        1. Look for `main()` function
+        2. Return None if not found
+
+        Args:
+            module: Loaded module
+
+        Returns:
+            Entrypoint function or None
+
+        Examples:
+            >>> import my_module
+            >>> entrypoint = EntrypointFinder.find_entrypoint_for_module(my_module)
+            >>> callable(entrypoint) if entrypoint else True
+            True
+        """
+        # For imported modules, look for main() function
+        if hasattr(module, "main") and callable(module.main):
+            return module.main
+
+        return None
+
+    @staticmethod
     def _find_main_block_function(tree: ast.AST) -> str | None:
         """
         Find function called in if __name__ == "__main__" block.

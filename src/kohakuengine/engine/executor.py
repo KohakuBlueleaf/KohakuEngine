@@ -93,6 +93,22 @@ class ScriptExecutor:
         Raises:
             RuntimeError: If module cannot be loaded
         """
+        # Handle module-based scripts differently
+        if self.script.is_module and self.script.module_name:
+            return self._load_importable_module()
+
+        return self._load_file_module()
+
+    def _load_file_module(self) -> ModuleType:
+        """
+        Load script from file path as Python module.
+
+        Returns:
+            Loaded module
+
+        Raises:
+            RuntimeError: If module cannot be loaded
+        """
         script_path = self.script.path.resolve()
 
         # Use a unique module name to prevent __name__ == "__main__" from executing
@@ -121,6 +137,28 @@ class ScriptExecutor:
         self._module = module
         return module
 
+    def _load_importable_module(self) -> ModuleType:
+        """
+        Load an importable module by name.
+
+        Returns:
+            Loaded module
+
+        Raises:
+            RuntimeError: If module cannot be loaded
+        """
+        import importlib
+
+        module_name = self.script.module_name
+
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError as e:
+            raise RuntimeError(f"Cannot import module: {module_name}") from e
+
+        self._module = module
+        return module
+
     def _find_entrypoint(self, module: ModuleType) -> Callable | None:
         """
         Find entrypoint in module.
@@ -139,12 +177,21 @@ class ScriptExecutor:
             if hasattr(module, self.script.entrypoint):
                 return getattr(module, self.script.entrypoint)
             else:
+                script_ref = (
+                    self.script.module_name
+                    if self.script.is_module
+                    else self.script.path
+                )
                 raise ValueError(
                     f"Specified entrypoint '{self.script.entrypoint}' "
-                    f"not found in {self.script.path}"
+                    f"not found in {script_ref}"
                 )
         else:
             # Auto-detect entrypoint
+            # For module-based scripts, use the path (which points to the module file)
+            # or fall back to main() lookup only
+            if self.script.is_module:
+                return EntrypointFinder.find_entrypoint_for_module(module)
             return EntrypointFinder.find_entrypoint(module, self.script.path)
 
     @property
