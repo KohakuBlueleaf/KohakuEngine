@@ -172,3 +172,216 @@ def test_script_repr_with_config(simple_script):
 
     assert "Script" in repr_str
     assert "Config" in repr_str
+
+
+# Tests for module import functionality
+
+
+def test_script_from_module():
+    """Test Script creation from importable module."""
+    # Use a known stdlib module
+    script = Script("json")
+
+    assert script.is_module is True
+    assert script.module_name == "json"
+    assert script.name == "json"
+
+
+def test_script_from_module_with_entrypoint():
+    """Test Script creation from module with entrypoint syntax."""
+    script = Script("json:dumps")
+
+    assert script.is_module is True
+    assert script.module_name == "json"
+    assert script.entrypoint == "dumps"
+    assert script.name == "json"
+
+
+def test_script_from_nested_module():
+    """Test Script creation from nested module."""
+    script = Script("kohakuengine.config")
+
+    assert script.is_module is True
+    assert script.module_name == "kohakuengine.config"
+    assert script.name == "config"
+
+
+def test_script_module_not_found():
+    """Test Script with non-existent module."""
+    with pytest.raises(ModuleNotFoundError, match="Module not found"):
+        Script("nonexistent_module_xyz")
+
+
+def test_script_module_repr():
+    """Test Script.__repr__ for module-based script."""
+    script = Script("json")
+    repr_str = repr(script)
+
+    assert "Script" in repr_str
+    assert "module=json" in repr_str
+
+
+def test_script_file_vs_module_detection(tmp_path):
+    """Test that file paths are correctly distinguished from modules."""
+    # Create a file with dots in parent directory name
+    script_file = tmp_path / "test.script.py"
+    script_file.write_text("def main(): return 1")
+
+    # This should be treated as a file, not a module
+    script = Script(script_file)
+    assert script.is_module is False
+
+
+def test_script_module_with_explicit_entrypoint():
+    """Test module with explicit entrypoint parameter."""
+    script = Script("json", entrypoint="loads")
+
+    assert script.is_module is True
+    assert script.module_name == "json"
+    assert script.entrypoint == "loads"
+
+
+def test_script_module_run_with_entrypoint():
+    """Test running a module-based script with entrypoint."""
+    # Create a test package in a temp location
+    import sys
+    import tempfile
+    import os
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create a test module
+        pkg_dir = os.path.join(tmpdir, "test_pkg")
+        os.makedirs(pkg_dir)
+
+        # Create __init__.py
+        with open(os.path.join(pkg_dir, "__init__.py"), "w") as f:
+            f.write("")
+
+        # Create a module with main function
+        with open(os.path.join(pkg_dir, "runner.py"), "w") as f:
+            f.write(
+                """
+value = 10
+
+def main():
+    return value * 2
+"""
+            )
+
+        # Add to sys.path temporarily
+        sys.path.insert(0, tmpdir)
+        try:
+            script = Script("test_pkg.runner")
+            result = script.run()
+            assert result == 20
+        finally:
+            sys.path.remove(tmpdir)
+
+
+def test_script_module_run_with_config():
+    """Test running a module-based script with config injection."""
+    import sys
+    import tempfile
+    import os
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pkg_dir = os.path.join(tmpdir, "test_pkg2")
+        os.makedirs(pkg_dir)
+
+        with open(os.path.join(pkg_dir, "__init__.py"), "w") as f:
+            f.write("")
+
+        with open(os.path.join(pkg_dir, "configurable.py"), "w") as f:
+            f.write(
+                """
+multiplier = 1
+
+def main():
+    return 5 * multiplier
+"""
+            )
+
+        sys.path.insert(0, tmpdir)
+        try:
+            config = Config(globals_dict={"multiplier": 10})
+            script = Script("test_pkg2.configurable", config=config)
+            result = script.run()
+            assert result == 50
+        finally:
+            sys.path.remove(tmpdir)
+
+
+def test_script_module_explicit_entrypoint_run():
+    """Test running module with explicit entrypoint function."""
+    import sys
+    import tempfile
+    import os
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pkg_dir = os.path.join(tmpdir, "test_pkg3")
+        os.makedirs(pkg_dir)
+
+        with open(os.path.join(pkg_dir, "__init__.py"), "w") as f:
+            f.write("")
+
+        with open(os.path.join(pkg_dir, "multi_entry.py"), "w") as f:
+            f.write(
+                """
+def main():
+    return "main"
+
+def alternate():
+    return "alternate"
+"""
+            )
+
+        sys.path.insert(0, tmpdir)
+        try:
+            # Test with explicit entrypoint via syntax
+            script = Script("test_pkg3.multi_entry:alternate")
+            result = script.run()
+            assert result == "alternate"
+
+            # Test with explicit entrypoint via parameter
+            script2 = Script("test_pkg3.multi_entry", entrypoint="alternate")
+            result2 = script2.run()
+            assert result2 == "alternate"
+        finally:
+            sys.path.remove(tmpdir)
+
+
+def test_script_module_missing_entrypoint():
+    """Test that missing entrypoint raises error."""
+    import sys
+    import tempfile
+    import os
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pkg_dir = os.path.join(tmpdir, "test_pkg4")
+        os.makedirs(pkg_dir)
+
+        with open(os.path.join(pkg_dir, "__init__.py"), "w") as f:
+            f.write("")
+
+        with open(os.path.join(pkg_dir, "no_entry.py"), "w") as f:
+            f.write(
+                """
+def helper():
+    return "helper"
+"""
+            )
+
+        sys.path.insert(0, tmpdir)
+        try:
+            script = Script("test_pkg4.no_entry:nonexistent")
+            with pytest.raises(ValueError, match="not found"):
+                script.run()
+        finally:
+            sys.path.remove(tmpdir)
+
+
+def test_script_is_module_false_for_files(simple_script):
+    """Test that file-based scripts have is_module=False."""
+    script = Script(simple_script)
+    assert script.is_module is False
+    assert script.module_name is None
