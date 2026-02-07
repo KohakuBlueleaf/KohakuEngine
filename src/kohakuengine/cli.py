@@ -39,11 +39,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if hasattr(args, "func"):
-        try:
-            args.func(args)
-        except Exception as e:
-            print(f"✗ Error: {e}", file=sys.stderr)
-            sys.exit(1)
+        args.func(args)
     else:
         parser.print_help()
 

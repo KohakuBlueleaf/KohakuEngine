@@ -123,6 +123,10 @@ class Sequential(ScriptWorkflow):
 
         proc = subprocess.Popen(cmd, env=env)
         proc.wait()
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Subprocess failed with exit code {proc.returncode}: {' '.join(cmd)}"
+            )
         return proc
 
     def _create_temp_config(self, config: Config) -> Path:
