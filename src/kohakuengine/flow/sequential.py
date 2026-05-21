@@ -1,5 +1,6 @@
 """Sequential workflow execution."""
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -102,8 +103,6 @@ class Sequential(ScriptWorkflow):
         Returns:
             CompletedProcess object
         """
-        import os
-
         env = os.environ.copy()
         env["KOGINE_WORKER_ID"] = "0"
 

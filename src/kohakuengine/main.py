@@ -1,35 +1,12 @@
-"""
-KohakuEngine Python API.
-
-Quick start:
-    from kohakuengine import Script, Config, Sequential
-
-    script = Script('train.py', config=Config(
-        globals_dict={'learning_rate': 0.001}
-    ))
-    result = script.run()
-
-Or use the run() convenience function:
-    from kohakuengine import run
-
-    run('train.py', globals_dict={'learning_rate': 0.001})
-"""
+"""High-level Python API for KohakuEngine."""
 
 from typing import Any
 
-from kohakuengine.config import Config, capture_globals, use
-from kohakuengine.engine import Script
-from kohakuengine.flow import Flow
+from kohakuengine.config import Config, load_config_file
+from kohakuengine.engine import ScriptExecutor, coerce_globals, introspect
+from kohakuengine.engine.script import Script
 
-
-__all__ = [
-    "Config",
-    "Script",
-    "Flow",
-    "capture_globals",
-    "use",
-    "run",
-]
+__all__ = ["run"]
 
 
 def run(
@@ -38,33 +15,29 @@ def run(
     globals_dict: dict[str, Any] | None = None,
     args: list[Any] | None = None,
     kwargs: dict[str, Any] | None = None,
+    set_overrides: dict[str, Any] | None = None,
+    strict: bool = False,
 ) -> Any:
     """
-    Convenience function to run a script.
+    Convenience runner that mirrors ``kogine run`` on the command line.
 
-    Args:
-        script_path: Path to script
-        config_path: Path to config file (optional)
-        globals_dict: Global variables to inject (optional)
-        args: Positional arguments for entrypoint (optional)
-        kwargs: Keyword arguments for entrypoint (optional)
+    Resolution:
 
-    Returns:
-        Script execution result
-
-    Examples:
-        # Run with inline config
-        >>> run('train.py', globals_dict={'learning_rate': 0.001})
-
-        # Run with config file
-        >>> run('train.py', config_path='config.py')
-
-        # Run with args and kwargs
-        >>> run('script.py', args=['arg1'], kwargs={'key': 'value'})
+    1. Load a Config from ``config_path`` (if any).
+    2. Override / construct from ``globals_dict``, ``args``, ``kwargs``.
+    3. Apply ``set_overrides`` (CLI-style ad-hoc overrides) with type
+       coercion against the script's introspected defaults (Idea 9).
+    4. Optionally enforce ``strict`` mode -- unknown keys raise.
     """
-    # Load config
-    if config_path:
-        config = Config.from_file(config_path)
+    if config_path is not None:
+        config: Config | None = load_config_file(config_path)
+        if isinstance(config, Config):
+            if globals_dict:
+                config.globals_dict = {**config.globals_dict, **globals_dict}
+            if args is not None:
+                config.args = list(args)
+            if kwargs is not None:
+                config.kwargs = {**config.kwargs, **kwargs}
     elif globals_dict is not None or args is not None or kwargs is not None:
         config = Config(
             globals_dict=globals_dict or {},
@@ -74,6 +47,12 @@ def run(
     else:
         config = None
 
-    # Create and run script
+    if set_overrides or strict:
+        defaults = introspect(script_path)
+        if config is None:
+            config = Config(globals_dict={})
+        merged = {**config.globals_dict, **(set_overrides or {})}
+        config.globals_dict = coerce_globals(merged, defaults, strict=strict)
+
     script = Script(script_path, config=config)
-    return script.run()
+    return ScriptExecutor(script).execute(config)

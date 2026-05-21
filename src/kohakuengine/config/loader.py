@@ -1,120 +1,241 @@
-"""Configuration loader for loading configs from Python files."""
+"""Loader for config files (Python source files)."""
 
 import importlib.util
 import inspect
+import itertools
 import sys
+import warnings
 from pathlib import Path
+from types import ModuleType
+from typing import Any, Iterator
 
-from kohakuengine.config.base import Config
+from kohakuengine.config.base import Config, _filter_globals
 from kohakuengine.config.generator import ConfigGenerator
+
+_VALID_SWEEP_MODES: frozenset[str] = frozenset({"grid", "zip"})
+
+
+def _exec_config_module(config_path: Path) -> ModuleType:
+    """Load a config file as an importable module."""
+    module_name = f"_kogine_config_{config_path.stem}_{abs(hash(str(config_path)))}"
+    spec = importlib.util.spec_from_file_location(module_name, config_path)
+    if spec is None or spec.loader is None:
+        raise ValueError(f"Cannot load config from {config_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(module_name, None)
+        raise
+    return module
+
+
+def _extract_meta(module: ModuleType) -> tuple[list, dict, dict]:
+    """Pull ``_args``, ``_kwargs``, ``_metadata`` off a config module."""
+    args_obj = getattr(module, "_args", None)
+    kwargs_obj = getattr(module, "_kwargs", None)
+    meta_obj = getattr(module, "_metadata", None)
+
+    if args_obj is None:
+        args: list[Any] = []
+    elif isinstance(args_obj, (list, tuple)):
+        args = list(args_obj)
+    else:
+        raise TypeError(f"_args must be a list or tuple, got {type(args_obj).__name__}")
+
+    if kwargs_obj is None:
+        kwargs: dict[str, Any] = {}
+    elif isinstance(kwargs_obj, dict):
+        kwargs = dict(kwargs_obj)
+    else:
+        raise TypeError(f"_kwargs must be a dict, got {type(kwargs_obj).__name__}")
+
+    if meta_obj is None:
+        metadata: dict[str, Any] = {}
+    elif isinstance(meta_obj, dict):
+        metadata = dict(meta_obj)
+    else:
+        raise TypeError(f"_metadata must be a dict, got {type(meta_obj).__name__}")
+
+    return args, kwargs, metadata
+
+
+def _expand_sweep(module: ModuleType) -> ConfigGenerator:
+    """Expand a declarative ``_sweep`` dict into a ConfigGenerator."""
+    sweep_obj = module._sweep
+    if not isinstance(sweep_obj, dict):
+        raise TypeError(f"_sweep must be a dict, got {type(sweep_obj).__name__}")
+
+    sweep = dict(sweep_obj)
+    mode = sweep.pop("__mode__", "grid")
+    if mode not in _VALID_SWEEP_MODES:
+        raise ValueError(
+            f"Unknown _sweep mode: {mode!r} (valid: {sorted(_VALID_SWEEP_MODES)})"
+        )
+
+    for axis, values in sweep.items():
+        if not isinstance(values, (list, tuple)):
+            raise TypeError(
+                f"_sweep[{axis!r}] must be a list or tuple, got "
+                f"{type(values).__name__}"
+            )
+
+    if mode == "zip" and len(sweep) > 1:
+        lengths = {axis: len(v) for axis, v in sweep.items()}
+        unique = set(lengths.values())
+        if len(unique) > 1:
+            raise ValueError(
+                f"_sweep zip mode requires equal-length axes, got {lengths}"
+            )
+
+    base = _filter_globals(vars(module), module.__name__)
+    args, kwargs, base_metadata = _extract_meta(module)
+
+    def generator() -> Iterator[Config]:
+        if not sweep:
+            yield Config(
+                globals_dict=dict(base),
+                args=list(args),
+                kwargs=dict(kwargs),
+                metadata=dict(base_metadata),
+            )
+            return
+
+        axes = list(sweep.keys())
+        value_lists = [list(sweep[k]) for k in axes]
+        if mode == "grid":
+            combos: Iterator[tuple] = itertools.product(*value_lists)
+        else:
+            combos = zip(*value_lists)
+
+        for combo in combos:
+            overrides = dict(zip(axes, combo))
+            new_globals = {**base, **overrides}
+            new_metadata = {**base_metadata, **overrides}
+            yield Config(
+                globals_dict=new_globals,
+                args=list(args),
+                kwargs=dict(kwargs),
+                metadata=new_metadata,
+            )
+
+    return ConfigGenerator(generator())
+
+
+def _synthesize_from_module(module: ModuleType) -> Config:
+    """Build a Config from a bare config file (Idea 1)."""
+    globals_dict = _filter_globals(vars(module), module.__name__)
+    args, kwargs, metadata = _extract_meta(module)
+    return Config(
+        globals_dict=globals_dict,
+        args=args,
+        kwargs=kwargs,
+        metadata=metadata,
+    )
+
+
+def _invoke_config_gen(
+    module: ModuleType, worker_id: int | None
+) -> Config | ConfigGenerator:
+    """Call the user's ``config_gen`` function and wrap its result."""
+    config_gen = module.config_gen
+    if not callable(config_gen):
+        raise ValueError("config_gen must be callable")
+
+    sig = inspect.signature(config_gen)
+    if worker_id is not None and "worker_id" in sig.parameters:
+        result = config_gen(worker_id=worker_id)
+    else:
+        result = config_gen()
+
+    if isinstance(result, Config):
+        return result
+    if hasattr(result, "__iter__") and hasattr(result, "__next__"):
+        return ConfigGenerator(result)
+    raise ValueError(
+        f"config_gen() must return Config or generator, got {type(result).__name__}"
+    )
+
+
+def load_config_file(
+    config_path: str | Path,
+    worker_id: int | None = None,
+) -> Config | ConfigGenerator:
+    """
+    Load a config from a Python file.
+
+    Resolution order:
+
+    1. ``config_gen()`` if present -- call it (today's explicit form).
+    2. ``CONFIG`` if present -- use it directly.
+    3. ``_sweep`` if present -- expand to a ConfigGenerator.
+    4. Otherwise -- synthesize a Config from module-level variables.
+
+    Args:
+        config_path: Path to a ``.py`` config file.
+        worker_id: Optional worker id forwarded to ``config_gen(worker_id=...)``.
+
+    Returns:
+        ``Config`` or ``ConfigGenerator``.
+    """
+    config_path = Path(config_path)
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+
+    module = _exec_config_module(config_path)
+
+    has_config_gen = hasattr(module, "config_gen")
+    has_CONFIG = hasattr(module, "CONFIG")
+    has_sweep = hasattr(module, "_sweep")
+
+    if has_config_gen:
+        if has_sweep:
+            warnings.warn(
+                f"{config_path}: _sweep is ignored because config_gen is defined.",
+                stacklevel=2,
+            )
+        return _invoke_config_gen(module, worker_id)
+
+    if has_CONFIG:
+        if has_sweep:
+            warnings.warn(
+                f"{config_path}: _sweep is ignored because CONFIG is defined.",
+                stacklevel=2,
+            )
+        config = module.CONFIG
+        if not isinstance(config, Config):
+            raise ValueError(
+                f"CONFIG must be Config instance, got {type(config).__name__}"
+            )
+        return config
+
+    if has_sweep:
+        return _expand_sweep(module)
+
+    return _synthesize_from_module(module)
+
+
+def load_from_dict(data: dict) -> Config:
+    """Create a Config from a dict (e.g. a parsed YAML/TOML/JSON payload)."""
+    return Config(
+        globals_dict=data.get("globals", {}),
+        args=data.get("args", []),
+        kwargs=data.get("kwargs", {}),
+        metadata=data.get("metadata", {}),
+    )
 
 
 class ConfigLoader:
-    """Load configuration from Python files."""
+    """Back-compatible facade. Prefer the module-level functions."""
 
     @staticmethod
     def load_config(
-        config_path: str | Path, worker_id: int | None = None
+        config_path: str | Path,
+        worker_id: int | None = None,
     ) -> Config | ConfigGenerator:
-        """
-        Load config from Python file.
-
-        Expected formats:
-        1. config_gen() function returning Config
-        2. config_gen() generator yielding Config objects
-        3. CONFIG variable (Config instance)
-
-        Args:
-            config_path: Path to Python config file
-
-        Returns:
-            Config or ConfigGenerator
-
-        Raises:
-            FileNotFoundError: Config file not found
-            ValueError: Invalid config format
-
-        Examples:
-            >>> config = ConfigLoader.load_config('config.py')
-            >>> isinstance(config, Config)
-            True
-        """
-        config_path = Path(config_path)
-        if not config_path.exists():
-            raise FileNotFoundError(f"Config file not found: {config_path}")
-
-        # Load module dynamically
-        spec = importlib.util.spec_from_file_location("config_module", config_path)
-        if spec is None or spec.loader is None:
-            raise ValueError(f"Cannot load config from {config_path}")
-
-        module = importlib.util.module_from_spec(spec)
-        sys.modules["config_module"] = module
-        spec.loader.exec_module(module)
-
-        # Try to find config
-        if hasattr(module, "config_gen"):
-            config_gen = module.config_gen
-            if not callable(config_gen):
-                raise ValueError("config_gen must be callable")
-
-            # Check if config_gen accepts worker_id parameter
-            sig = inspect.signature(config_gen)
-            params = sig.parameters
-
-            # Call config_gen with or without worker_id
-            if worker_id is not None and "worker_id" in params:
-                result = config_gen(worker_id=worker_id)
-            else:
-                result = config_gen()
-
-            # Check if it's a generator or Config
-            if isinstance(result, Config):
-                return result
-            elif hasattr(result, "__iter__") and hasattr(result, "__next__"):
-                # It's a generator/iterator
-                return ConfigGenerator(result)
-            else:
-                raise ValueError(
-                    f"config_gen() must return Config or generator, got {type(result).__name__}"
-                )
-
-        elif hasattr(module, "CONFIG"):
-            config = module.CONFIG
-            if not isinstance(config, Config):
-                raise ValueError(
-                    f"CONFIG must be Config instance, got {type(config).__name__}"
-                )
-            return config
-
-        else:
-            raise ValueError(
-                "Config file must define 'config_gen()' function or 'CONFIG' variable"
-            )
+        return load_config_file(config_path, worker_id=worker_id)
 
     @staticmethod
     def load_from_dict(data: dict) -> Config:
-        """
-        Create Config from dictionary.
-
-        Useful for loading from JSON/TOML/YAML parsed data.
-        Users should parse external formats themselves in config.py.
-
-        Args:
-            data: Dictionary with config data
-
-        Returns:
-            Config instance
-
-        Examples:
-            >>> data = {'globals': {'lr': 0.001}, 'kwargs': {'device': 'cuda'}}
-            >>> config = ConfigLoader.load_from_dict(data)
-            >>> config.globals_dict['lr']
-            0.001
-        """
-        return Config(
-            globals_dict=data.get("globals", {}),
-            args=data.get("args", []),
-            kwargs=data.get("kwargs", {}),
-            metadata=data.get("metadata", {}),
-        )
+        return load_from_dict(data)

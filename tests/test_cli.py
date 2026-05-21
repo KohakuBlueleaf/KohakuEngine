@@ -1,461 +1,312 @@
-"""Tests for CLI functionality."""
+"""Tests for the kogine CLI."""
 
+import argparse
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
+from kohakuengine.cli import (
+    _parse_set,
+    _parse_sweep,
+    cmd_config_check,
+    cmd_config_show,
+    cmd_config_validate,
+    cmd_run,
+    cmd_workflow_parallel,
+    cmd_workflow_sequential,
+    create_parser,
+    main,
+)
 
-def run_cli(*args, check=True):
-    """Helper to run CLI commands."""
-    cmd = [sys.executable, "-m", "kohakuengine.cli"] + list(args)
-    result = subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", check=False
+# ---------------------------------------------------------------------------
+# Parser construction
+# ---------------------------------------------------------------------------
+
+
+def test_parser_run_defaults():
+    p = create_parser()
+    args = p.parse_args(["run", "s.py"])
+    assert args.script == "s.py"
+    assert args.set == []
+    assert args.sweep == []
+    assert args.strict is False
+    assert args.subprocess is False
+
+
+def test_parser_run_with_flags():
+    p = create_parser()
+    args = p.parse_args(
+        ["run", "s.py", "--set", "a=1", "--set", "b=2", "--sweep", "x=1,2", "--strict"]
     )
-    if check and result.returncode != 0:
-        raise subprocess.CalledProcessError(
-            result.returncode, cmd, result.stdout, result.stderr
-        )
-    return result
-
-
-class TestCLIBasic:
-    """Test basic CLI functionality."""
-
-    def test_cli_no_args(self):
-        """Test CLI with no arguments shows help."""
-        result = run_cli(check=False)
-        assert result.returncode == 0
-        assert "KohakuEngine" in result.stdout or "usage" in result.stdout.lower()
-
-    def test_cli_help(self):
-        """Test --help flag."""
-        result = run_cli("--help")
-        assert result.returncode == 0
-        assert "KohakuEngine" in result.stdout
-        assert "run" in result.stdout
-        assert "workflow" in result.stdout
-        assert "config" in result.stdout
-
-    def test_cli_version(self):
-        """Test --version flag."""
-        result = run_cli("--version")
-        assert result.returncode == 0
-        assert "kogine" in result.stdout.lower()
-
-
-class TestCLIRun:
-    """Test 'run' command."""
-
-    def test_run_simple_script(self, tmp_path):
-        """Test running a simple script."""
-        script = tmp_path / "script.py"
-        script.write_text(
-            """
-def main():
-    print("Hello from script")
-    return 42
-
-if __name__ == "__main__":
-    main()
-"""
-        )
-        result = run_cli("run", str(script))
-        assert result.returncode == 0
-        assert "✓" in result.stdout or "successfully" in result.stdout.lower()
-        assert "Hello from script" in result.stdout
-
-    def test_run_with_config(self, tmp_path):
-        """Test running script with config."""
-        script = tmp_path / "script.py"
-        script.write_text(
-            """
-value = 0
-
-def main():
-    print(f"Value: {value}")
-    return value
-
-if __name__ == "__main__":
-    main()
-"""
-        )
-
-        config = tmp_path / "config.py"
-        config.write_text(
-            """
-from kohakuengine import Config
-
-def config_gen():
-    return Config(globals_dict={'value': 123})
-"""
-        )
-
-        result = run_cli("run", str(script), "--config", str(config))
-        assert result.returncode == 0
-        assert "Value: 123" in result.stdout
-
-    def test_run_with_entrypoint(self, tmp_path):
-        """Test running script with custom entrypoint."""
-        script = tmp_path / "script.py"
-        script.write_text(
-            """
-def custom_main():
-    print("Custom entrypoint")
-    return "custom"
-
-def main():
-    print("Default main")
-    return "default"
-
-if __name__ == "__main__":
-    main()
-"""
-        )
-
-        result = run_cli("run", str(script), "--entrypoint", "custom_main")
-        assert result.returncode == 0
-        assert "Custom entrypoint" in result.stdout
-
-    def test_run_script_not_found(self):
-        """Test error when script not found."""
-        result = run_cli("run", "nonexistent.py", check=False)
-        assert result.returncode == 1
-        assert "Error" in result.stderr
-
-    def test_run_invalid_config(self, tmp_path):
-        """Test error with invalid config."""
-        script = tmp_path / "script.py"
-        script.write_text(
-            """
-def main():
-    pass
-
-if __name__ == "__main__":
-    main()
-"""
-        )
-
-        result = run_cli("run", str(script), "--config", "nonexistent.py", check=False)
-        assert result.returncode == 1
-        assert "Error" in result.stderr
-
-
-class TestCLIWorkflowSequential:
-    """Test 'workflow sequential' command."""
-
-    def test_sequential_multiple_scripts(self, tmp_path):
-        """Test sequential execution of multiple scripts."""
-        script1 = tmp_path / "script1.py"
-        script1.write_text(
-            """
-def main():
-    print("Script 1")
-    return 1
-
-if __name__ == "__main__":
-    main()
-"""
-        )
-
-        script2 = tmp_path / "script2.py"
-        script2.write_text(
-            """
-def main():
-    print("Script 2")
-    return 2
-
-if __name__ == "__main__":
-    main()
-"""
-        )
-
-        result = run_cli("workflow", "sequential", str(script1), str(script2))
-        assert result.returncode == 0
-        assert "Script 1" in result.stdout
-        assert "Script 2" in result.stdout
-        assert "2 executions" in result.stdout
-
-    def test_sequential_with_config(self, tmp_path):
-        """Test sequential workflow with config."""
-        script = tmp_path / "script.py"
-        script.write_text(
-            """
-value = 0
-
-def main():
-    print(f"Value: {value}")
-
-if __name__ == "__main__":
-    main()
-"""
-        )
-
-        config = tmp_path / "config.py"
-        config.write_text(
-            """
-from kohakuengine import Config
-
-def config_gen():
-    return Config(globals_dict={'value': 999})
-"""
-        )
-
-        result = run_cli("workflow", "sequential", str(script), "--config", str(config))
-        assert result.returncode == 0
-        assert "Value: 999" in result.stdout
-
-    def test_sequential_no_scripts(self):
-        """Test error when no scripts provided."""
-        result = run_cli("workflow", "sequential", check=False)
-        assert result.returncode != 0
-
-
-class TestCLIWorkflowParallel:
-    """Test 'workflow parallel' command."""
-
-    def test_parallel_multiple_scripts(self, tmp_path):
-        """Test parallel execution."""
-        script1 = tmp_path / "script1.py"
-        script1.write_text(
-            """
-def main():
-    print("Parallel 1")
-    return 1
-
-if __name__ == "__main__":
-    main()
-"""
-        )
-
-        script2 = tmp_path / "script2.py"
-        script2.write_text(
-            """
-def main():
-    print("Parallel 2")
-    return 2
-
-if __name__ == "__main__":
-    main()
-"""
-        )
-
-        result = run_cli(
-            "workflow", "parallel", str(script1), str(script2), "--mode", "pool"
-        )
-        assert result.returncode == 0
-        assert "2 executions" in result.stdout
-
-    def test_parallel_with_workers(self, tmp_path):
-        """Test parallel with worker count."""
-        script = tmp_path / "script.py"
-        script.write_text(
-            """
-def main():
-    return 1
-
-if __name__ == "__main__":
-    main()
-"""
-        )
-
-        result = run_cli(
-            "workflow", "parallel", str(script), "--workers", "2", "--mode", "pool"
-        )
-        assert result.returncode == 0
-
-    def test_parallel_subprocess_mode(self, tmp_path):
-        """Test parallel with subprocess mode."""
-        script = tmp_path / "script.py"
-        script.write_text(
-            """
-def main():
-    print("Subprocess mode")
-    return 1
-
-if __name__ == "__main__":
-    main()
-"""
-        )
-
-        result = run_cli("workflow", "parallel", str(script), "--mode", "subprocess")
-        assert result.returncode == 0
-
-    def test_parallel_with_config(self, tmp_path):
-        """Test parallel workflow with config."""
-        script = tmp_path / "script.py"
-        script.write_text(
-            """
-value = 0
-
-def main():
-    return value
-
-if __name__ == "__main__":
-    main()
-"""
-        )
-
-        config = tmp_path / "config.py"
-        config.write_text(
-            """
-from kohakuengine import Config
-
-def config_gen():
-    return Config(globals_dict={'value': 777})
-"""
-        )
-
-        result = run_cli(
-            "workflow",
-            "parallel",
-            str(script),
-            "--config",
-            str(config),
-            "--mode",
-            "pool",
-        )
-        assert result.returncode == 0
-
-
-class TestCLIConfig:
-    """Test 'config' commands."""
-
-    def test_config_validate_static(self, tmp_path):
-        """Test validating static config."""
-        config = tmp_path / "config.py"
-        config.write_text(
-            """
-from kohakuengine import Config
-
-def config_gen():
-    return Config(globals_dict={'lr': 0.01})
-"""
-        )
-
-        result = run_cli("config", "validate", str(config))
-        assert result.returncode == 0
-        assert "✓" in result.stdout or "valid" in result.stdout.lower()
-        assert "Config" in result.stdout
-
-    def test_config_validate_generator(self, tmp_path):
-        """Test validating generator config."""
-        config = tmp_path / "config.py"
-        config.write_text(
-            """
-from kohakuengine import Config
-
-def config_gen():
-    for i in range(3):
-        yield Config(globals_dict={'value': i})
-"""
-        )
-
-        result = run_cli("config", "validate", str(config))
-        assert result.returncode == 0
-        assert "✓" in result.stdout or "valid" in result.stdout.lower()
-
-    def test_config_validate_invalid(self):
-        """Test error with invalid config."""
-        result = run_cli("config", "validate", "nonexistent.py", check=False)
-        assert result.returncode == 1
-        assert "Error" in result.stderr
-
-    def test_config_show_static(self, tmp_path):
-        """Test showing static config."""
-        config = tmp_path / "config.py"
-        config.write_text(
-            """
-from kohakuengine import Config
-
-def config_gen():
-    return Config(
-        globals_dict={'lr': 0.01, 'batch_size': 32},
-        args=[1, 2],
-        kwargs={'device': 'cuda'},
-        metadata={'exp': 'test'}
+    assert args.set == ["a=1", "b=2"]
+    assert args.sweep == ["x=1,2"]
+    assert args.strict is True
+
+
+def test_parser_no_command_prints_help(capfd):
+    main([])
+    out = capfd.readouterr().out
+    assert "kogine" in out
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def test_parse_set_basic():
+    assert _parse_set(["a=1", "b=hi"]) == {"a": "1", "b": "hi"}
+
+
+def test_parse_set_missing_eq():
+    with pytest.raises(SystemExit, match="KEY=VALUE"):
+        _parse_set(["nope"])
+
+
+def test_parse_sweep_basic():
+    assert _parse_sweep(["lr=0.001,0.01"]) == {"lr": ["0.001", "0.01"]}
+
+
+def test_parse_sweep_missing_eq():
+    with pytest.raises(SystemExit):
+        _parse_sweep(["xyz"])
+
+
+# ---------------------------------------------------------------------------
+# cmd_run
+# ---------------------------------------------------------------------------
+
+
+def _ns(**kw):
+    defaults = dict(
+        script=None,
+        config=None,
+        entrypoint=None,
+        set=[],
+        sweep=[],
+        strict=False,
+        subprocess=False,
     )
-"""
-        )
-
-        result = run_cli("config", "show", str(config))
-        assert result.returncode == 0
-        assert "Static" in result.stdout
-        assert "lr" in result.stdout
-        assert "0.01" in result.stdout
-        assert "batch_size" in result.stdout
-        assert "32" in result.stdout
-
-    def test_config_show_generator(self, tmp_path):
-        """Test showing generator config."""
-        config = tmp_path / "config.py"
-        config.write_text(
-            """
-from kohakuengine import Config
-
-def config_gen():
-    for lr in [0.001, 0.01]:
-        yield Config(globals_dict={'lr': lr})
-"""
-        )
-
-        result = run_cli("config", "show", str(config))
-        assert result.returncode == 0
-        assert "Generator" in result.stdout
-        assert "Config 1" in result.stdout
-        assert "Config 2" in result.stdout
-        assert "0.001" in result.stdout
-        assert "0.01" in result.stdout
+    defaults.update(kw)
+    return argparse.Namespace(**defaults)
 
 
-class TestCLIEdgeCases:
-    """Test edge cases and error handling."""
+def test_cmd_run_simple(simple_script, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cmd_run(_ns(script=str(simple_script)))
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "executed successfully" in out
 
-    def test_run_script_with_exception(self, tmp_path):
-        """Test script that raises exception."""
-        script = tmp_path / "script.py"
-        script.write_text(
-            """
-def main():
-    raise ValueError("Test error")
 
-if __name__ == "__main__":
-    main()
-"""
-        )
+def test_cmd_run_with_set(simple_script, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cmd_run(_ns(script=str(simple_script), set=["lr=0.55"]))
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "0.55" in out
 
-        result = run_cli("run", str(script), check=False)
-        assert result.returncode == 1
-        assert "Error" in result.stderr
 
-    def test_run_non_python_file(self, tmp_path):
-        """Test error with non-.py file."""
-        script = tmp_path / "script.txt"
-        script.write_text("not python")
+def test_cmd_run_with_config(simple_script, simple_config, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cmd_run(_ns(script=str(simple_script), config=str(simple_config)))
+    assert exc.value.code == 0
 
-        result = run_cli("run", str(script), check=False)
-        assert result.returncode == 1
-        assert "Error" in result.stderr
 
-    def test_workflow_sequential_script_error(self, tmp_path):
-        """Test sequential workflow with script error."""
-        script = tmp_path / "script.py"
-        script.write_text(
-            """
-def main():
-    raise RuntimeError("Oops")
+def test_cmd_run_with_sweep(simple_script, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cmd_run(_ns(script=str(simple_script), sweep=["lr=0.1,0.2"]))
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "iterations" in out
 
-if __name__ == "__main__":
-    main()
-"""
-        )
 
-        result = run_cli("workflow", "sequential", str(script), check=False)
-        assert result.returncode == 1
-        assert "Error" in result.stderr
+def test_cmd_run_with_generator_config(simple_script, make_config, capsys):
+    cfg = make_config(
+        "g.py",
+        """
+        from kohakuengine.config import Config
+        def config_gen():
+            for i in range(2):
+                yield Config(globals_dict={"lr": i / 10})
+        """,
+    )
+    with pytest.raises(SystemExit) as exc:
+        cmd_run(_ns(script=str(simple_script), config=str(cfg)))
+    assert exc.value.code == 0
 
-    def test_invalid_command(self):
-        """Test invalid command."""
-        result = run_cli("invalid", check=False)
-        assert result.returncode != 0
+
+def test_cmd_run_no_entrypoint(make_script, capsys):
+    s = make_script("e.py", "x = 1\n")
+    with pytest.raises(SystemExit) as exc:
+        cmd_run(_ns(script=str(s), set=["x=2"]))
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "entrypoint" in err.lower()
+
+
+# ---------------------------------------------------------------------------
+# cmd_config_validate / show / check
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_config_validate(bare_config, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cmd_config_validate(_ns(config=str(bare_config)))
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "valid" in out.lower()
+
+
+def test_cmd_config_show_static(bare_config, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cmd_config_show(_ns(config=str(bare_config)))
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "globals_dict" in out
+    assert "lr" in out
+
+
+def test_cmd_config_show_sweep(make_config, capsys):
+    cfg = make_config("sweep.py", "_sweep = {'lr': [0.1, 0.2], 'bs': [32]}\n")
+    with pytest.raises(SystemExit) as exc:
+        cmd_config_show(_ns(config=str(cfg)))
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "Total configs: 2" in out
+
+
+def test_cmd_config_show_explicit_gen(make_config, capsys):
+    cfg = make_config(
+        "g.py",
+        """
+        from kohakuengine.config import Config
+        def config_gen():
+            return Config(globals_dict={"x": 1})
+        """,
+    )
+    with pytest.raises(SystemExit) as exc:
+        cmd_config_show(_ns(config=str(cfg)))
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "config_gen" in out
+
+
+def test_cmd_config_show_explicit_CONFIG(make_config, capsys):
+    cfg = make_config(
+        "g.py",
+        """
+        from kohakuengine.config import Config
+        CONFIG = Config(globals_dict={"x": 1})
+        """,
+    )
+    with pytest.raises(SystemExit) as exc:
+        cmd_config_show(_ns(config=str(cfg)))
+    assert exc.value.code == 0
+
+
+def test_cmd_config_check_hits(simple_script, bare_config, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cmd_config_check(_ns(script=str(simple_script), config=str(bare_config)))
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "[OK]" in out
+    assert "lr" in out
+
+
+def test_cmd_config_check_typo(make_script, make_config, capsys):
+    s = make_script(
+        "s.py",
+        """
+        learning_rate = 0.1
+        def main():
+            return learning_rate
+        if __name__ == '__main__':
+            main()
+        """,
+    )
+    cfg = make_config("c.py", "lerning_rate = 0.5\n")
+    with pytest.raises(SystemExit) as exc:
+        cmd_config_check(_ns(script=str(s), config=str(cfg)))
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "[??]" in out
+    assert "learning_rate" in out
+
+
+def test_cmd_config_check_new_var(simple_script, make_config, capsys):
+    cfg = make_config("c.py", "wholly_new_xy = 5\n")
+    with pytest.raises(SystemExit) as exc:
+        cmd_config_check(_ns(script=str(simple_script), config=str(cfg)))
+    # New var (no similar key) -> exit 0
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "[+]" in out
+
+
+def test_cmd_config_check_script_missing(bare_config, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cmd_config_check(_ns(script="/nope/x.py", config=str(bare_config)))
+    assert exc.value.code == 2
+
+
+def test_cmd_config_check_generator_config(make_config, simple_script, capsys):
+    cfg = make_config(
+        "g.py",
+        """
+        from kohakuengine.config import Config
+        def config_gen():
+            for i in range(2):
+                yield Config(globals_dict={"lr": i / 10})
+        """,
+    )
+    with pytest.raises(SystemExit) as exc:
+        cmd_config_check(_ns(script=str(simple_script), config=str(cfg)))
+    assert exc.value.code == 0
+
+
+# ---------------------------------------------------------------------------
+# workflow
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_workflow_sequential(simple_script, capsys):
+    args = _ns(scripts=[str(simple_script), str(simple_script)])
+    with pytest.raises(SystemExit) as exc:
+        cmd_workflow_sequential(args)
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "Sequential" in out
+
+
+def test_cmd_workflow_parallel(simple_script, capsys):
+    args = _ns(
+        scripts=[str(simple_script)],
+        workers=1,
+        mode="subprocess",
+    )
+    with pytest.raises(SystemExit) as exc:
+        cmd_workflow_parallel(args)
+    assert exc.value.code == 0
+
+
+# ---------------------------------------------------------------------------
+# Top-level main() -- thin smoke test via subprocess for argv handling
+# ---------------------------------------------------------------------------
+
+
+def test_cli_module_entry(simple_script):
+    """Spawn `python -m kohakuengine.cli run <script>` end-to-end."""
+    cmd = [sys.executable, "-m", "kohakuengine.cli", "run", str(simple_script)]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    assert result.returncode == 0
+    assert "executed successfully" in result.stdout
+
+
+def test_cli_main_version(capfd):
+    with pytest.raises(SystemExit) as exc:
+        main(["--version"])
+    assert exc.value.code == 0
+    out = capfd.readouterr().out
+    assert "kogine" in out

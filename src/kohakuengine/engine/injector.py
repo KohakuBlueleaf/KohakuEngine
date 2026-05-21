@@ -1,15 +1,10 @@
-"""Global variable injection into Python modules."""
+"""Inject runtime globals into Python modules."""
 
-import sys
 from types import ModuleType
 from typing import Any
 
-
-class GlobalInjector:
-    """Inject global variables into Python modules."""
-
-    # Blacklist of names we should never override
-    PROTECTED_NAMES = {
+PROTECTED_NAMES: frozenset[str] = frozenset(
+    {
         "__name__",
         "__file__",
         "__package__",
@@ -19,71 +14,33 @@ class GlobalInjector:
         "__builtins__",
         "__doc__",
     }
+)
+
+
+class GlobalInjector:
+    """Inject global variables into Python modules."""
+
+    PROTECTED_NAMES = PROTECTED_NAMES
 
     @staticmethod
     def inject(module: ModuleType, globals_dict: dict[str, Any]) -> None:
-        """
-        Inject global variables into module.
-
-        Args:
-            module: Target module
-            globals_dict: Dict of {var_name: value} to inject
-
-        Raises:
-            ValueError: If trying to override protected names
-
-        Examples:
-            >>> import types
-            >>> module = types.ModuleType('test')
-            >>> GlobalInjector.inject(module, {'learning_rate': 0.001})
-            >>> module.learning_rate
-            0.001
-        """
+        """Inject ``globals_dict`` into ``module``. Refuses protected names."""
         for name, value in globals_dict.items():
-            if name in GlobalInjector.PROTECTED_NAMES:
+            if name in PROTECTED_NAMES:
                 raise ValueError(f"Cannot override protected module attribute: {name}")
-
-            # Set attribute on module
             setattr(module, name, value)
 
     @staticmethod
     def get_user_globals(module: ModuleType) -> dict[str, Any]:
-        """
-        Extract user-defined globals from module.
-
-        Filters out built-in attributes, imports, and functions.
-        Useful for inspecting what's available to override.
-
-        Args:
-            module: Module to inspect
-
-        Returns:
-            Dict of user-defined global variables
-
-        Examples:
-            >>> import types
-            >>> module = types.ModuleType('test')
-            >>> module.learning_rate = 0.001
-            >>> module.batch_size = 32
-            >>> globals_dict = GlobalInjector.get_user_globals(module)
-            >>> 'learning_rate' in globals_dict
-            True
-        """
-        user_globals = {}
-
+        """Return user-defined data globals (skipping modules, callables, classes)."""
+        user_globals: dict[str, Any] = {}
         for name in dir(module):
-            # Skip private/protected
             if name.startswith("_"):
                 continue
-
             value = getattr(module, name)
-
-            # Skip modules, functions, classes (keep only data)
             if isinstance(value, (ModuleType, type)):
                 continue
             if callable(value):
                 continue
-
             user_globals[name] = value
-
         return user_globals

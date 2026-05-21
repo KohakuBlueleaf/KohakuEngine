@@ -1,86 +1,31 @@
 """Base configuration classes for KohakuEngine."""
 
 import inspect
+import warnings
 from dataclasses import dataclass, field
-from pathlib import Path
-from types import ModuleType
+from types import FrameType, ModuleType
 from typing import Any
 
-
-class CaptureGlobals:
-    """
-    Context manager to capture global variables defined within a block.
-
-    Examples:
-        >>> with capture_globals() as ctx:
-        ...     learning_rate = 0.001
-        ...     batch_size = 32
-        >>> config = Config.from_context(ctx)
-        >>> config.globals_dict
-        {'learning_rate': 0.001, 'batch_size': 32}
-    """
-
-    def __init__(self):
-        self.captured: dict[str, Any] = {}
-        self._before: set[str] = set()
-        self._frame_globals: dict = {}
-
-    def __enter__(self) -> "CaptureGlobals":
-        frame = inspect.currentframe().f_back
-        self._frame_globals = frame.f_globals
-        self._before = set(frame.f_globals.keys())
-        return self
-
-    def __exit__(self, *args) -> bool:
-        # Capture ALL new variables - no filtering (except the context itself)
-        after = set(self._frame_globals.keys())
-        new_vars = after - self._before
-
-        for name in new_vars:
-            value = self._frame_globals[name]
-            # Skip the context variable itself to avoid self-capture
-            if value is self:
-                continue
-            self.captured[name] = value
-
-        return False
-
-
-def capture_globals() -> CaptureGlobals:
-    """
-    Create a context manager to capture global variables.
-
-    Returns:
-        CaptureGlobals context manager
-
-    Examples:
-        >>> with capture_globals() as ctx:
-        ...     learning_rate = 0.001
-        ...     batch_size = 32
-        >>> config = Config.from_context(ctx)
-    """
-    return CaptureGlobals()
+_RESERVED_NAMES: frozenset[str] = frozenset({"_args", "_kwargs", "_metadata", "_sweep"})
 
 
 class Use:
     """
-    Wrapper to mark functions/classes for inclusion in config capture.
+    Wrapper marking an imported callable/class for inclusion in config capture.
 
-    By default, from_globals() skips functions and classes.
-    Wrap them with use() to include them.
+    With v0.2, locally-defined callables and classes are captured automatically
+    by ``Config.from_globals`` and the bare-config-file loader path. ``use()``
+    is only required when forwarding an imported callable/class as config data.
 
     Examples:
-        >>> from kohakuengine import Config, use
-        >>>
-        >>> learning_rate = 0.001
-        >>> my_func = use(some_function)
-        >>> MyModel = use(SomeModelClass)
-        >>>
-        >>> def config_gen():
-        ...     return Config.from_globals()
+        >>> import math
+        >>> loss_fn = use(math.sqrt)   # imported callable - needs use()
+        >>> def local_fn(x): return x  # locally defined - captured automatically
     """
 
-    def __init__(self, value: Any):
+    __slots__ = ("value",)
+
+    def __init__(self, value: Any) -> None:
         self.value = value
 
     def __repr__(self) -> str:
@@ -88,46 +33,119 @@ class Use:
 
 
 def use(value: Any) -> Use:
+    """Mark an imported function/class for inclusion in config capture."""
+    return Use(value)
+
+
+class CaptureGlobals:
     """
-    Mark a function/class for inclusion in config capture.
+    Context manager that captures variables introduced inside a ``with`` block.
+
+    .. deprecated:: 0.2
+        Define variables at module top-level instead -- they are captured
+        automatically. Will be removed in v0.3.
+    """
+
+    def __init__(self) -> None:
+        warnings.warn(
+            "capture_globals() is deprecated in v0.2 and will be removed in v0.3. "
+            "Define variables at module top level instead -- they are captured "
+            "automatically by the bare-config-file loader.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        self.captured: dict[str, Any] = {}
+        self._before: set[str] = set()
+        self._frame_globals: dict[str, Any] = {}
+
+    def __enter__(self) -> "CaptureGlobals":
+        caller = inspect.currentframe().f_back
+        self._frame_globals = caller.f_globals
+        self._before = set(caller.f_globals.keys())
+        return self
+
+    def __exit__(self, *args: Any) -> bool:
+        after = set(self._frame_globals.keys())
+        for name in after - self._before:
+            value = self._frame_globals[name]
+            if value is self:
+                continue
+            self.captured[name] = value
+        return False
+
+
+def capture_globals() -> CaptureGlobals:
+    """Create a context manager to capture variables defined inside a block."""
+    return CaptureGlobals()
+
+
+def _filter_globals(
+    namespace: dict[str, Any],
+    module_name: str,
+) -> dict[str, Any]:
+    """
+    Shared filter used by both ``Config.from_globals`` and the loader.
+
+    Captures:
+
+    - Plain data (numbers, strings, lists, dicts, custom instances...)
+    - Local callables and classes (``obj.__module__ == module_name``)
+    - Anything wrapped in ``use()``
+
+    Skips:
+
+    - Names starting with ``_`` (reserved names, dunders, privates)
+    - Module objects
+    - Imported callables/classes (they live in another module)
 
     Args:
-        value: Function or class to include
+        namespace: Module ``__dict__`` or ``frame.f_globals`` to scan.
+        module_name: Used to discriminate locally-defined callables from
+            imported ones via the ``__module__`` attribute.
 
     Returns:
-        Use wrapper
-
-    Examples:
-        >>> my_func = use(some_function)
-        >>> MyModel = use(SomeModelClass)
+        Dict of ``{name: value}`` suitable for ``Config.globals_dict``.
     """
-    return Use(value)
+    out: dict[str, Any] = {}
+    for name, value in namespace.items():
+        if name.startswith("_"):
+            continue
+        if isinstance(value, ModuleType):
+            continue
+        if isinstance(value, Use):
+            out[name] = value.value
+            continue
+        if isinstance(value, type) or callable(value):
+            if getattr(value, "__module__", None) == module_name:
+                out[name] = value
+            continue
+        out[name] = value
+    return out
+
+
+def _frame_module_name(frame: FrameType) -> str:
+    """Best-effort module name for a frame (used by ``Config.from_globals``)."""
+    name = frame.f_globals.get("__name__")
+    if isinstance(name, str):
+        return name
+    return "<unknown>"
 
 
 @dataclass
 class Config:
     """
-    Configuration for script execution.
+    Configuration for one script execution.
 
-    This class holds all configuration data needed to execute a script:
-    - Global variables to inject into the module
-    - Positional arguments for the entrypoint function
-    - Keyword arguments for the entrypoint function
-    - Optional metadata for tracking and logging
+    Holds the inputs the engine needs:
 
-    Attributes:
-        globals_dict: Module-level global variables to override
-        args: Positional arguments for entrypoint function
-        kwargs: Keyword arguments for entrypoint function
-        metadata: Optional metadata for tracking/logging
+    - ``globals_dict`` -- module-level globals to inject into the script
+    - ``args`` -- positional arguments forwarded to the entrypoint
+    - ``kwargs`` -- keyword arguments forwarded to the entrypoint
+    - ``metadata`` -- arbitrary tracking/logging info (not injected)
 
     Examples:
-        >>> config = Config(
-        ...     globals_dict={'learning_rate': 0.001, 'batch_size': 32},
-        ...     kwargs={'device': 'cuda'}
-        ... )
-        >>> config.globals_dict['learning_rate']
-        0.001
+        >>> Config(globals_dict={"lr": 0.01}, kwargs={"device": "cuda"})
+        Config(globals_dict={'lr': 0.01}, args=[], kwargs={'device': 'cuda'}, metadata={})
     """
 
     globals_dict: dict[str, Any] = field(default_factory=dict)
@@ -136,7 +154,6 @@ class Config:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Validate config structure."""
         if not isinstance(self.globals_dict, dict):
             raise TypeError(
                 f"globals_dict must be a dict, got {type(self.globals_dict).__name__}"
@@ -151,124 +168,22 @@ class Config:
             raise TypeError(
                 f"metadata must be a dict, got {type(self.metadata).__name__}"
             )
-
-        # Convert tuple to list for consistency
         if isinstance(self.args, tuple):
             self.args = list(self.args)
 
     @classmethod
-    def from_file(
-        cls, config_path: str | Path, worker_id: int | None = None
-    ) -> "Config":
-        """
-        Load config from Python file.
-
-        This is a convenience method that internally uses ConfigLoader.
-
-        Args:
-            config_path: Path to Python config file
-            worker_id: Optional worker ID for parallel execution
-
-        Returns:
-            Config or ConfigGenerator instance
-
-        Examples:
-            >>> config = Config.from_file('config.py')
-            >>> config.globals_dict
-            {'learning_rate': 0.001}
-
-            >>> # With worker ID (for parallel execution)
-            >>> config = Config.from_file('config.py', worker_id=0)
-        """
-        from kohakuengine.config.loader import ConfigLoader
-
-        return ConfigLoader.load_config(config_path, worker_id=worker_id)
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "Config":
-        """
-        Create Config from dictionary.
-
-        Args:
-            data: Dictionary with config data
-
-        Returns:
-            Config instance
-
-        Examples:
-            >>> config = Config.from_dict({'globals': {'lr': 0.001}})
-            >>> config.globals_dict
-            {'lr': 0.001}
-        """
-        from kohakuengine.config.loader import ConfigLoader
-
-        return ConfigLoader.load_from_dict(data)
-
-    @classmethod
     def from_context(cls, context: CaptureGlobals) -> "Config":
-        """
-        Create Config from captured globals context.
-
-        Args:
-            context: CaptureGlobals context manager
-
-        Returns:
-            Config instance
-
-        Examples:
-            >>> with capture_globals() as ctx:
-            ...     learning_rate = 0.001
-            ...     batch_size = 32
-            >>> config = Config.from_context(ctx)
-            >>> config.globals_dict
-            {'learning_rate': 0.001, 'batch_size': 32}
-        """
+        """Create a Config from the captured globals of a ``with`` block."""
         return cls(globals_dict=dict(context.captured))
 
     @classmethod
     def from_globals(cls) -> "Config":
         """
-        Create Config from caller's global variables.
+        Capture the caller's module-level variables as a Config.
 
-        Captures all user-defined globals (excludes private, modules,
-        functions, classes, and common imports).
-
-        Returns:
-            Config instance
-
-        Examples:
-            >>> # In config.py:
-            >>> learning_rate = 0.001
-            >>> batch_size = 32
-            >>>
-            >>> def config_gen():
-            ...     return Config.from_globals()
+        Locally-defined callables and classes are captured automatically.
+        Imported callables/classes are skipped unless wrapped in ``use()``.
         """
         frame = inspect.currentframe().f_back
-        user_globals = {}
-
-        for name, value in frame.f_globals.items():
-            # Skip private/protected
-            if name.startswith("_"):
-                continue
-
-            # Skip modules
-            if isinstance(value, ModuleType):
-                continue
-
-            # Handle Use wrapper - unwrap and include
-            if isinstance(value, Use):
-                user_globals[name] = value.value
-                continue
-
-            # Skip types/classes (unless wrapped with use())
-            if isinstance(value, type):
-                continue
-
-            # Skip callables/functions (unless wrapped with use())
-            if callable(value):
-                continue
-
-            user_globals[name] = value
-
-        return cls(globals_dict=user_globals)
+        module_name = _frame_module_name(frame)
+        return cls(globals_dict=_filter_globals(frame.f_globals, module_name))

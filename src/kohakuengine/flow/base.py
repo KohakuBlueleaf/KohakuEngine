@@ -15,26 +15,11 @@ class Workflow(ABC):
 
     @abstractmethod
     def run(self) -> Any:
-        """
-        Execute the workflow.
-
-        Returns:
-            Workflow result (implementation-specific)
-        """
-        pass
+        """Execute the workflow."""
 
     @abstractmethod
     def validate(self) -> bool:
-        """
-        Validate workflow configuration.
-
-        Returns:
-            True if valid
-
-        Raises:
-            ValueError: If configuration is invalid
-        """
-        pass
+        """Validate workflow configuration. Raises ValueError if invalid."""
 
 
 class ScriptWorkflow(Workflow):

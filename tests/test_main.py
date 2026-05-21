@@ -1,43 +1,60 @@
-"""Tests for main API module."""
+"""Tests for the top-level run() convenience."""
 
 import pytest
 
 from kohakuengine import run
 
 
-def test_run_with_inline_config(script_with_globals):
-    """Test run() with inline configuration."""
-    result = run(
-        str(script_with_globals), globals_dict={"learning_rate": 0.01, "batch_size": 64}
+def test_run_with_inline_globals(simple_script):
+    assert run(str(simple_script), globals_dict={"lr": 0.7}) == 0.7
+
+
+def test_run_with_config_file(simple_script, make_config):
+    cfg = make_config(
+        "c.py",
+        """
+        from kohakuengine.config import Config
+        def config_gen():
+            return Config(globals_dict={"lr": 0.25})
+        """,
     )
+    assert run(str(simple_script), config_path=str(cfg)) == 0.25
 
-    assert result == 0.01 * 64
+
+def test_run_set_overrides(simple_script):
+    out = run(str(simple_script), set_overrides={"lr": "0.4"})
+    # Coercion: string -> float because default is 0.1
+    assert out == 0.4
 
 
-def test_run_with_config_file(script_with_globals, simple_config_file):
-    """Test run() with config file."""
-    # Note: simple_config_file has different globals, but we'll use the values
-    result = run(str(script_with_globals), config_path=str(simple_config_file))
+def test_run_strict_passes(simple_script):
+    out = run(str(simple_script), globals_dict={"lr": 0.9}, strict=True)
+    assert out == 0.9
 
-    # simple_config_file has lr=0.01, bs=64
-    assert result == 0.01 * 64
+
+def test_run_strict_rejects_unknown(simple_script):
+    with pytest.raises(KeyError):
+        run(str(simple_script), set_overrides={"unknown": 1}, strict=True)
 
 
 def test_run_no_config(simple_script):
-    """Test run() without any configuration."""
-    result = run(str(simple_script))
-
-    assert result == "success"
+    # When no config + no overrides, run() executes with defaults
+    assert run(str(simple_script)) == 0.1
 
 
-def test_run_with_args(script_with_args):
-    """Test run() with args and kwargs."""
-    result = run(str(script_with_args), args=[10], kwargs={"y": 20})
-
-    assert result == 30
+def test_run_args_kwargs(args_script):
+    assert run(str(args_script), args=[10], kwargs={"y": 2}) == 12
 
 
-def test_run_script_not_found():
-    """Test run() with non-existent script."""
-    with pytest.raises(FileNotFoundError):
-        run("nonexistent.py")
+def test_run_merges_config_file_with_globals(simple_script, make_config):
+    cfg = make_config(
+        "c.py",
+        """
+        from kohakuengine.config import Config
+        def config_gen():
+            return Config(globals_dict={"lr": 0.1})
+        """,
+    )
+    # Inline globals merge into the loaded config
+    out = run(str(simple_script), config_path=str(cfg), globals_dict={"lr": 0.55})
+    assert out == 0.55

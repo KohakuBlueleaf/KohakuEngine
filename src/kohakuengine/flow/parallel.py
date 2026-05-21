@@ -1,5 +1,6 @@
 """Parallel workflow execution using subprocesses."""
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -105,8 +106,6 @@ class Parallel(ScriptWorkflow):
             return proc
 
         # Use ThreadPoolExecutor to limit concurrent subprocesses
-        import os
-
         max_workers = self.max_workers or os.cpu_count() or 1
 
         results = []
@@ -137,8 +136,6 @@ class Parallel(ScriptWorkflow):
         Returns:
             Popen process handle
         """
-        import os
-
         # Set up environment with worker ID
         env = os.environ.copy()
         env["KOGINE_WORKER_ID"] = str(worker_id)

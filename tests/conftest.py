@@ -1,95 +1,89 @@
-"""Pytest fixtures for KohakuEngine tests."""
+"""Shared pytest fixtures."""
+
+import textwrap
 
 import pytest
 
 
 @pytest.fixture
-def simple_script(tmp_path):
-    """Create a simple test script."""
-    script = tmp_path / "simple_script.py"
-    script.write_text(
-        """
-result = None
+def make_script(tmp_path):
+    """Factory: write a script with given source, return its Path."""
 
-def main():
-    global result
-    result = "success"
-    return result
+    def _factory(name: str, src: str) -> "pathlib.Path":
+        path = tmp_path / name
+        path.write_text(textwrap.dedent(src), encoding="utf-8")
+        return path
 
-if __name__ == "__main__":
-    main()
-"""
-    )
-    return script
+    return _factory
 
 
 @pytest.fixture
-def script_with_globals(tmp_path):
-    """Create script that uses global variables."""
-    script = tmp_path / "globals_script.py"
-    script.write_text(
-        """
-learning_rate = 0.001
-batch_size = 32
+def make_config(tmp_path):
+    """Factory: write a config file with given source, return its Path."""
 
-def main():
-    return learning_rate * batch_size
+    def _factory(name: str, src: str) -> "pathlib.Path":
+        path = tmp_path / name
+        path.write_text(textwrap.dedent(src), encoding="utf-8")
+        return path
 
-if __name__ == "__main__":
-    main()
-"""
-    )
-    return script
+    return _factory
 
 
 @pytest.fixture
-def script_with_args(tmp_path):
-    """Create script that accepts args/kwargs."""
-    script = tmp_path / "args_script.py"
-    script.write_text(
+def simple_script(make_script):
+    return make_script(
+        "simple.py",
         """
-def main(x, y=10):
-    return x + y
+        result = None
+        lr = 0.1
 
-if __name__ == "__main__":
-    main(5)
-"""
+        def main():
+            global result
+            result = lr
+            return result
+
+        if __name__ == "__main__":
+            main()
+        """,
     )
-    return script
 
 
 @pytest.fixture
-def simple_config_file(tmp_path):
-    """Create a simple config file."""
-    config = tmp_path / "simple_config.py"
-    config.write_text(
+def args_script(make_script):
+    return make_script(
+        "args.py",
         """
-from kohakuengine.config import Config
+        def main(x, y=10):
+            return x + y
 
-def config_gen():
-    return Config(
-        globals_dict={'learning_rate': 0.01, 'batch_size': 64},
-        kwargs={'device': 'cuda'}
+        if __name__ == "__main__":
+            main(5)
+        """,
     )
-"""
-    )
-    return config
 
 
 @pytest.fixture
-def generator_config_file(tmp_path):
-    """Create a generator config file."""
-    config = tmp_path / "gen_config.py"
-    config.write_text(
+def simple_config(make_config):
+    return make_config(
+        "config.py",
         """
-from kohakuengine.config import Config
+        from kohakuengine.config import Config
 
-def config_gen():
-    for i in range(3):
-        yield Config(
-            globals_dict={'iteration': i},
-            kwargs={'iter_num': i}
-        )
-"""
+        def config_gen():
+            return Config(
+                globals_dict={"lr": 0.01},
+                kwargs={},
+            )
+        """,
     )
-    return config
+
+
+@pytest.fixture
+def bare_config(make_config):
+    return make_config(
+        "bare_config.py",
+        """
+        lr = 0.5
+        batch_size = 64
+        """,
+    )

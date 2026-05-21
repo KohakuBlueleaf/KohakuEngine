@@ -1,7 +1,7 @@
-"""Script representation for KohakuEngine."""
+"""Script representation."""
 
-import importlib
 import importlib.util
+import os
 import re
 import subprocess
 import sys
@@ -13,94 +13,42 @@ from typing import Any
 from kohakuengine.config.base import Config
 from kohakuengine.config.generator import ConfigGenerator
 
+_FILE_ENTRYPOINT_RE = re.compile(r"\.py:([a-zA-Z_][a-zA-Z0-9_]*)$")
+
 
 @dataclass
 class Script:
-    """
-    Represents an executable Python script or importable module.
-
-    Attributes:
-        path: Path to Python script file (can include entrypoint as script.py:func_name)
-              OR importable module name (e.g., 'mypackage.mymodule' or 'mypackage.mymodule:func')
-        config: Configuration (Config or ConfigGenerator)
-        entrypoint: Name of entrypoint function (default: auto-detect from if __name__ == "__main__")
-
-    Examples:
-        >>> script = Script('train.py', config=Config(globals_dict={'lr': 0.001}))
-        >>> script.name
-        'train'
-
-        >>> # Specify entrypoint explicitly
-        >>> script = Script('train.py:custom_train')
-        >>> script.entrypoint
-        'custom_train'
-
-        >>> # Use importable module
-        >>> script = Script('mypackage.train')
-        >>> script.is_module
-        True
-
-        >>> # Module with entrypoint
-        >>> script = Script('mypackage.train:run')
-        >>> script.module_name
-        'mypackage.train'
-    """
+    """A Python script or importable module to execute."""
 
     path: str | Path
     config: Config | ConfigGenerator | None = None
     entrypoint: str | None = None
-    # Internal fields set during __post_init__
     is_module: bool = field(default=False, init=False)
     module_name: str | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
-        """Validate script path/module and parse entrypoint if specified."""
         path_str = str(self.path)
-
-        # First, check if this looks like a module path (contains dots but no path separators
-        # before .py, or doesn't end with .py)
         if self._looks_like_module(path_str):
             self._init_as_module(path_str)
         else:
             self._init_as_file(path_str)
 
-    def _looks_like_module(self, path_str: str) -> bool:
-        """
-        Determine if the path looks like an importable module name.
-
-        Module patterns:
-        - 'package.module' (no .py extension)
-        - 'package.module:entrypoint'
-
-        File patterns:
-        - 'script.py'
-        - './script.py'
-        - '/path/to/script.py'
-        - 'C:\\path\\script.py'
-        - 'script.py:entrypoint'
-        """
-        # If it contains path separators, it's a file
+    @staticmethod
+    def _looks_like_module(path_str: str) -> bool:
         if "/" in path_str or "\\" in path_str:
             return False
-
-        # If it ends with .py (with optional :entrypoint), it's a file
         if re.search(r"\.py(:[a-zA-Z_][a-zA-Z0-9_]*)?$", path_str):
             return False
-
-        # Otherwise, it's likely a module (e.g., 'package.module' or 'package.module:func')
         return True
 
     def _init_as_module(self, path_str: str) -> None:
-        """Initialize Script from an importable module name."""
-        # Parse entrypoint from module:entrypoint syntax
         if ":" in path_str:
-            module_part, entrypoint_part = path_str.rsplit(":", 1)
+            module_part, entry_part = path_str.rsplit(":", 1)
             if self.entrypoint is None:
-                self.entrypoint = entrypoint_part
+                self.entrypoint = entry_part
         else:
             module_part = path_str
 
-        # Validate module is importable
         spec = importlib.util.find_spec(module_part)
         if spec is None:
             raise ModuleNotFoundError(f"Module not found: {module_part}")
@@ -108,23 +56,18 @@ class Script:
         self.is_module = True
         self.module_name = module_part
 
-        # Set path to the module's file location if available
         if spec.origin and spec.origin != "built-in":
             self.path = Path(spec.origin)
         else:
-            # For built-in or namespace packages, keep as string
             self.path = Path(module_part.replace(".", "/"))
 
     def _init_as_file(self, path_str: str) -> None:
-        """Initialize Script from a file path."""
-        # Check if path contains entrypoint (script.py:function)
-        # Handle Windows paths like C:\path\script.py:func correctly
-        match = re.search(r"\.py:([a-zA-Z_][a-zA-Z0-9_]*)$", path_str)
+        match = _FILE_ENTRYPOINT_RE.search(path_str)
         if match:
             entrypoint_name = match.group(1)
-            script_path = path_str[: match.start() + 3]  # Include .py
+            script_path = path_str[: match.start() + 3]
             self.path = Path(script_path)
-            if self.entrypoint is None:  # Only override if not already set
+            if self.entrypoint is None:
                 self.entrypoint = entrypoint_name
         else:
             self.path = Path(self.path)
@@ -139,9 +82,7 @@ class Script:
 
     @property
     def name(self) -> str:
-        """Get script name (module name or filename without extension)."""
         if self.is_module and self.module_name:
-            # Return the last part of the module name
             return self.module_name.split(".")[-1]
         return self.path.stem
 
@@ -151,57 +92,18 @@ class Script:
             return f"Script(module={self.module_name}, config={config_type})"
         return f"Script(path={self.path}, config={config_type})"
 
-    def run(self, config: Config | None = None, use_subprocess: bool = False) -> Any:
-        """
-        Execute the script.
-
-        This is a convenience method that internally uses ScriptExecutor.
-
-        Args:
-            config: Optional config to override script's config
-            use_subprocess: If True, run in subprocess (useful for asyncio scripts)
-
-        Returns:
-            Script execution result (or CompletedProcess if use_subprocess=True)
-
-        Examples:
-            >>> script = Script('train.py', config=Config(globals_dict={'lr': 0.001}))
-            >>> result = script.run()
-
-            >>> # Use subprocess for asyncio scripts
-            >>> result = script.run(use_subprocess=True)
-        """
-        if use_subprocess:
-            return self._run_subprocess(config)
-
-        from kohakuengine.engine.executor import ScriptExecutor
-
-        executor = ScriptExecutor(self)
-        return executor.execute(config)
-
     def _run_subprocess(
         self, config: Config | None = None
     ) -> subprocess.CompletedProcess:
-        """
-        Execute script in subprocess.
-
-        Args:
-            config: Configuration to apply
-
-        Returns:
-            CompletedProcess object
-        """
-        import os
-
-        config = config or self.config
+        """Execute this script in a subprocess via the ``kogine`` CLI."""
+        config = config if config is not None else self.config
         env = os.environ.copy()
-        env["KOGINE_WORKER_ID"] = "0"
+        env.setdefault("KOGINE_WORKER_ID", "0")
 
-        # Use module name if this is a module-based script, otherwise use path
         script_ref = self.module_name if self.is_module else str(self.path)
 
-        if config and not isinstance(config, ConfigGenerator):
-            temp_config = self._create_temp_config(config)
+        if config is not None and not isinstance(config, ConfigGenerator):
+            temp_config = _serialize_config(config)
             cmd = [
                 sys.executable,
                 "-m",
@@ -218,31 +120,20 @@ class Script:
         proc.wait()
         return proc
 
-    def _create_temp_config(self, config: Config) -> Path:
-        """
-        Create temporary Python config file.
 
-        Args:
-            config: Config to serialize
-
-        Returns:
-            Path to temporary config file
-        """
-        fd, path = tempfile.mkstemp(suffix=".py", prefix="kogine_config_")
-
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(
-                f"""
-from kohakuengine.config import Config
-
-def config_gen():
-    return Config(
-        globals_dict={config.globals_dict!r},
-        args={config.args!r},
-        kwargs={config.kwargs!r},
-        metadata={config.metadata!r}
+def _serialize_config(config: Config) -> Path:
+    """Write a Config to a temp ``.py`` file usable by the CLI."""
+    fd, path = tempfile.mkstemp(suffix=".py", prefix="kogine_config_")
+    body = (
+        "from kohakuengine.config import Config\n\n"
+        "def config_gen():\n"
+        f"    return Config(\n"
+        f"        globals_dict={config.globals_dict!r},\n"
+        f"        args={config.args!r},\n"
+        f"        kwargs={config.kwargs!r},\n"
+        f"        metadata={config.metadata!r},\n"
+        "    )\n"
     )
-"""
-            )
-
-        return Path(path)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(body)
+    return Path(path)

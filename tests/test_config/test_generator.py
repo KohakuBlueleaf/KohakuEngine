@@ -1,55 +1,48 @@
-"""Tests for config.generator module."""
+"""Tests for kohakuengine.config.generator."""
 
 import pytest
 
-from kohakuengine.config import Config
-from kohakuengine.config.generator import ConfigGenerator
+from kohakuengine.config import Config, ConfigGenerator
 
 
-def test_config_generator_iteration():
-    """Test basic config generator iteration."""
-
-    def my_gen():
-        for i in range(3):
-            yield Config(globals_dict={"iteration": i})
-
-    gen = ConfigGenerator(my_gen())
-
-    configs = list(gen)
-    assert len(configs) == 3
-
-    for i, cfg in enumerate(configs):
-        assert isinstance(cfg, Config)
-        assert cfg.globals_dict == {"iteration": i}
+def _gen():
+    yield Config(globals_dict={"i": 0})
+    yield Config(globals_dict={"i": 1})
 
 
-def test_config_generator_exhaustion():
-    """Test generator exhaustion detection."""
+def test_iter_returns_self():
+    g = ConfigGenerator(_gen())
+    assert iter(g) is g
 
-    def my_gen():
-        yield Config(globals_dict={"value": 1})
 
-    gen = ConfigGenerator(my_gen())
-
-    # First iteration works
-    config = next(gen)
-    assert config.globals_dict == {"value": 1}
-
-    # Second iteration raises StopIteration
+def test_next_yields_configs():
+    g = ConfigGenerator(_gen())
+    c1 = next(g)
+    c2 = next(g)
+    assert (c1.globals_dict["i"], c2.globals_dict["i"]) == (0, 1)
     with pytest.raises(StopIteration):
-        next(gen)
-
-    # Generator is marked as exhausted
-    assert gen.exhausted
+        next(g)
+    assert g.exhausted is True
 
 
-def test_config_generator_type_validation():
-    """Test that generator validates yielded types."""
+def test_non_config_yield_raises():
+    def bad():
+        yield 42
 
-    def invalid_gen():
-        yield "not a config"  # Invalid!
+    g = ConfigGenerator(bad())
+    with pytest.raises(TypeError, match="Config"):
+        next(g)
 
-    gen = ConfigGenerator(invalid_gen())
 
-    with pytest.raises(TypeError, match="Generator must yield Config objects"):
-        next(gen)
+def test_exhausted_after_stop_iteration():
+    g = ConfigGenerator(iter([]))
+    with pytest.raises(StopIteration):
+        next(g)
+    with pytest.raises(StopIteration):
+        next(g)  # second call also raises
+
+
+def test_for_loop_iteration():
+    g = ConfigGenerator(_gen())
+    items = list(g)
+    assert len(items) == 2

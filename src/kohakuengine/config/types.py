@@ -8,7 +8,7 @@ from kohakuengine.config.base import Config
 class ConfigProvider(Protocol):
     """Protocol for objects that provide configs."""
 
-    def get_config(self) -> Config | Iterator[Config]:
+    def get_config(self) -> Config | Iterator[Config]:  # pragma: no cover
         """Get config or config iterator."""
         ...
 
@@ -16,6 +16,6 @@ class ConfigProvider(Protocol):
 class Configurable(Protocol):
     """Protocol for objects that accept configs."""
 
-    def apply_config(self, config: Config) -> None:
+    def apply_config(self, config: Config) -> None:  # pragma: no cover
         """Apply configuration."""
         ...
