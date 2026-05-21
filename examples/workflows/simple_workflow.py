@@ -1,20 +1,27 @@
-"""Simple workflow example using simplified API."""
+"""Sequential workflow using bare-file configs (v0.2 style)."""
 
-from kohakuengine import Config, Flow, Script
+from pathlib import Path
 
-# Load configs from files using Config.from_file()
-hello_config = Config.from_file("examples/configs/hello_config.py")
-train_config = Config.from_file("examples/configs/train_config.py")
+from kohakuengine import Flow, Script, load_config_file
 
-# Define scripts with configs
-hello_script = Script("examples/scripts/hello.py", config=hello_config)
-train_script = Script("examples/scripts/train_simple.py", config=train_config)
+HERE = Path(__file__).parent.parent
 
-# Create and run workflow
-if __name__ == "__main__":
-    # Use Flow with sequential mode
+hello_script = Script(
+    str(HERE / "scripts" / "hello.py"),
+    config=load_config_file(HERE / "configs" / "hello_config.py"),
+)
+train_script = Script(
+    str(HERE / "scripts" / "train_simple.py"),
+    config=load_config_file(HERE / "configs" / "train_config.py"),
+)
+
+
+def main():
     workflow = Flow([hello_script, train_script], mode="sequential")
     results = workflow.run()
-
     print(f"\nWorkflow completed with {len(results)} steps")
     print(f"Results: {results}")
+
+
+if __name__ == "__main__":
+    main()

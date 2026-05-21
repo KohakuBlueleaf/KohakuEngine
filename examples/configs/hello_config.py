@@ -1,11 +1,6 @@
-"""Simple config for hello.py example."""
+"""Config for hello.py -- demonstrates _kwargs (Idea 3)."""
 
-from kohakuengine.config import Config
+name = "KohakuEngine"
+greeting = "Welcome to"
 
-
-def config_gen():
-    """Generate config for hello script."""
-    return Config(
-        globals_dict={"name": "KohakuEngine", "greeting": "Welcome to"},
-        kwargs={"excited": True},
-    )
+_kwargs = {"excited": True}

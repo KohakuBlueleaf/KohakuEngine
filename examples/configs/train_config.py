@@ -1,15 +1,11 @@
-"""Training config for train_simple.py example."""
+"""Training config -- bare-file style (Idea 1).
 
-from kohakuengine.config import Config
+Just module-level variables. No ``def config_gen():``, no imports,
+no ``Config()`` construction. The loader auto-captures these as
+``Config.globals_dict``.
+"""
 
-
-def config_gen():
-    """Generate config for training script."""
-    return Config(
-        globals_dict={
-            "learning_rate": 0.01,
-            "batch_size": 64,
-            "epochs": 3,
-            "device": "cuda",
-        }
-    )
+learning_rate = 0.01
+batch_size = 64
+epochs = 3
+device = "cuda"
