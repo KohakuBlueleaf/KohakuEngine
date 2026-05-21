@@ -4,32 +4,92 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kohaku-engine"
-version = "0.0.2"
-description = "All-in-Python Config and Execution engine system for RD workload"
+version = "0.2.0"
+description = "All-in-Python configuration and execution engine for R&D workloads."
 authors = [
-    { name = "Shih-Ying Yeh(KohakuBlueLeaf)", email = "apolloyeh0123@gmail.com" },
+    { name = "Shih-Ying Yeh (Kohaku-Blueleaf)", email = "apolloyeh0123@gmail.com" },
+]
+maintainers = [
+    { name = "Shih-Ying Yeh (Kohaku-Blueleaf)", email = "apolloyeh0123@gmail.com" },
 ]
 license = { text = "Apache-2.0" }
 readme = "README.md"
 requires-python = ">=3.10"
+keywords = [
+    "configuration",
+    "experiment-management",
+    "hyperparameter-sweep",
+    "machine-learning",
+    "research",
+    "workflow",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
+]
 dependencies = []
-urls = { "Homepage" = "https://github.com/KohakuBlueleaf/KohakuEngine" }
+
+[project.urls]
+Homepage = "https://github.com/KohakuBlueleaf/KohakuEngine"
+Repository = "https://github.com/KohakuBlueleaf/KohakuEngine"
+Issues = "https://github.com/KohakuBlueleaf/KohakuEngine/issues"
+Documentation = "https://github.com/KohakuBlueleaf/KohakuEngine#readme"
 
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0.0",
     "pytest-cov>=7.0.0",
-    "black>=25.0.0",
+    "black>=26.0.0",
+    "build>=1.0.0",
+    "twine>=6.0.0",
 ]
 examples = [
     "OmegaConf",
     "toml",
 ]
 
-
 [project.scripts]
 kogine = "kohakuengine.cli:main"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
+package-dir = { "" = "src" }
+include-package-data = true
 
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+kohakuengine = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.coverage.run]
+source = ["src/kohakuengine"]
+branch = false
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py310", "py311", "py312", "py313", "py314"]
