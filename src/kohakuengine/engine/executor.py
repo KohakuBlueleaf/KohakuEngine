@@ -15,6 +15,7 @@ from kohakuengine.engine.entrypoint import (
     find_entrypoint,
 )
 from kohakuengine.engine.injector import GlobalInjector
+from kohakuengine.utils import add_script_dir_to_path, importable_module_name
 
 if TYPE_CHECKING:
     from kohakuengine.engine.script import Script
@@ -69,20 +70,27 @@ class ScriptExecutor:
         return module
 
     def _load_file_module(self, script_path: Path) -> ModuleType:
-        module_name = f"_kohaku_script_{self.script.name}_{id(self)}"
+        add_script_dir_to_path(script_path)
+        module_name = importable_module_name(script_path)
         spec = importlib.util.spec_from_file_location(module_name, script_path)
         if spec is None or spec.loader is None:
             raise RuntimeError(f"Cannot load script: {script_path}")
         module = importlib.util.module_from_spec(spec)
+        # Keep the module registered under an importable name so objects it
+        # defines (functions/classes) stay picklable for multiprocessing and
+        # re-importable in spawned workers. Only unregister on failure so a
+        # half-initialized module never lingers.
         sys.modules[module_name] = module
         try:
             spec.loader.exec_module(module)
-        finally:
+        except BaseException:
             sys.modules.pop(module_name, None)
+            raise
         return module
 
     def _load_with_cell(self, script_path: Path, config: Config | None) -> ModuleType:
-        module_name = f"_kohaku_script_{self.script.name}_{id(self)}"
+        add_script_dir_to_path(script_path)
+        module_name = importable_module_name(script_path)
         module = ModuleType(module_name)
         module.__file__ = str(script_path)
         module.__name__ = module_name
@@ -92,8 +100,9 @@ class ScriptExecutor:
         sys.modules[module_name] = module
         try:
             execute_with_cell(script_path, overrides, module.__dict__)
-        finally:
+        except BaseException:
             sys.modules.pop(module_name, None)
+            raise
         return module
 
     def _load_importable_module(self) -> ModuleType:

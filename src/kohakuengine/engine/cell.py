@@ -32,7 +32,6 @@ import tokenize
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType
 from typing import Any, Iterable
 
 _MARKER_RE = re.compile(r"^\s*#\s*%%\s*kogine\s*:\s*(\w+)\s*$")

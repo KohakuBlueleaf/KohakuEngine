@@ -1,8 +1,28 @@
 """Shared pytest fixtures."""
 
+import sys
 import textwrap
 
 import pytest
+
+
+@pytest.fixture
+def restore_import_state():
+    """Snapshot/restore ``sys.path`` and ``sys.modules`` around a test.
+
+    Loading a file script now (intentionally) leaves it registered in
+    ``sys.modules`` under its stem and puts its directory on ``sys.path`` so
+    its objects are picklable for multiprocessing. Tests that exercise that
+    use this fixture to avoid leaking state into the rest of the session.
+    """
+    path_snapshot = list(sys.path)
+    modules_snapshot = set(sys.modules)
+    try:
+        yield
+    finally:
+        sys.path[:] = path_snapshot
+        for name in set(sys.modules) - modules_snapshot:
+            sys.modules.pop(name, None)
 
 
 @pytest.fixture

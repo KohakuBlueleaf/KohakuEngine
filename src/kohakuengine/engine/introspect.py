@@ -21,9 +21,11 @@ from typing import Any
 
 from kohakuengine.config.base import _filter_globals
 from kohakuengine.engine.cell import CellInfo, evaluate_cell, parse_cell
+from kohakuengine.utils import add_script_dir_to_path
 
 
 def _import_no_main(script_path: Path) -> ModuleType:
+    add_script_dir_to_path(script_path)
     module_name = f"_kogine_introspect_{script_path.stem}_{abs(hash(str(script_path)))}"
     spec = importlib.util.spec_from_file_location(module_name, script_path)
     if spec is None or spec.loader is None:

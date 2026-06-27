@@ -172,8 +172,7 @@ class Parallel(ScriptWorkflow):
 
         # Write config
         with open(path, "w", encoding="utf-8") as f:
-            f.write(
-                f"""
+            f.write(f"""
 from kohakuengine.config import Config
 
 def config_gen():
@@ -183,8 +182,7 @@ def config_gen():
         kwargs={config.kwargs!r},
         metadata={config.metadata!r}
     )
-"""
-            )
+""")
 
         return Path(path)
 

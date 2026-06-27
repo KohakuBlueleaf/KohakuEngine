@@ -8,7 +8,6 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from kohakuengine.config.base import Config
 from kohakuengine.config.generator import ConfigGenerator
