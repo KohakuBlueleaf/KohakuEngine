@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kohaku-engine"
-version = "0.3.0"
+version = "0.4.0"
 description = "All-in-Python configuration and execution engine for R&D workloads."
 authors = [
     { name = "Shih-Ying Yeh (Kohaku-Blueleaf)", email = "apolloyeh0123@gmail.com" },
