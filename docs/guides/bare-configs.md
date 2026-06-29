@@ -112,6 +112,72 @@ from kohakuengine import use
 weighted = use(functools.partial(math.pow, 2))
 ```
 
+## Composing configs (`use_config`)
+
+To build a config on top of another one, use `use_config()` — **not** a
+plain `import`. A direct `import` of a sibling config is blocked (the
+config's directory is deliberately kept off `sys.path`) and, even if it
+weren't, it would bypass the loader: a `config_gen()` / `CONFIG` base
+would not resolve, and inherited functions, classes, and `_args` /
+`_kwargs` / `_metadata` would be silently dropped.
+
+```python
+# base.py
+learning_rate = 0.01
+batch_size = 64
+model = "resnet"
+
+
+def lr_schedule(epoch):
+    return learning_rate * 0.95**epoch
+```
+
+```python
+# experiment.py
+from kohakuengine import use_config
+
+use_config("base.py")   # inherit everything from base.py
+batch_size = 128        # ...then override what you need
+epochs = 5              # ...and add new values
+```
+
+`kogine config show experiment.py` lowers to:
+
+```text
+learning_rate: 0.01      # inherited
+batch_size:    128       # overridden (base had 64)
+model:         "resnet"  # inherited
+lr_schedule:   <function># inherited — a plain import would drop this
+epochs:        5         # new
+```
+
+Rules:
+
+- The path is resolved **relative to the file calling `use_config`**, so
+  `use_config("../shared/base.py")` works regardless of your shell's
+  working directory.
+- **Your own top-level variables always win** over imported ones. Stack
+  multiple `use_config(...)` calls to layer bases — later calls win over
+  earlier ones, and your own assignments win over all of them.
+- The base is loaded through the full loader, so bare, `CONFIG`, and
+  `config_gen` bases all resolve. Importing a **sweep** config is an
+  error (it is not a single value source); circular imports are detected
+  and raise.
+- `_args` is inherited (your own, if present, replaces it); `_kwargs`
+  and `_metadata` are merged (your own keys win).
+
+`use_config()` also returns the resolved `Config`, so you can compose
+explicitly inside `config_gen`:
+
+```python
+from kohakuengine import Config, use_config
+
+
+def config_gen():
+    base = use_config("base.py")
+    return Config(globals_dict={**base.globals_dict, "learning_rate": 0.5})
+```
+
 ## Reserved underscore names
 
 | Name        | Purpose                                                    |

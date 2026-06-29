@@ -5,6 +5,38 @@ All notable changes to KohakuEngine are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Nested configs via `use_config(path)`.** Compose a config on top of
+  another one from within a config file:
+
+  ```python
+  from kohakuengine import use_config
+  use_config("base.py")   # inherit everything
+  batch_size = 128        # then override
+  ```
+
+  The base is loaded through the full loader (so `config_gen` / `CONFIG`
+  / bare bases all resolve) and inherited functions, classes, and
+  `_args` / `_kwargs` / `_metadata` are preserved. The path resolves
+  relative to the calling config file; your own values win over imported
+  ones; stacking multiple calls layers bases (later wins). Importing a
+  sweep config raises, and circular imports are detected.
+
+### Fixed
+
+- **Scripts run by `kogine` now match `python script.py` import
+  semantics.** The script's directory is prepended to `sys.path`, so
+  sibling modules and `__init__`-less (namespace) packages import
+  correctly.
+- **Functions defined in a `kogine`-run script are now picklable for
+  `multiprocessing`.** Scripts are loaded under their importable module
+  name and kept in `sys.modules`, so `ProcessPoolExecutor` / `Pool`
+  workers can resolve them (previously failed with `Can't pickle ...:
+  import of module '_kohaku_script_..._<id>' failed`).
+
 ## [0.2.0] — 2026-05-21
 
 A major ergonomic overhaul. Existing v0.1.x configs and scripts continue

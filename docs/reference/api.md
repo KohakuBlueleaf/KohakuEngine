@@ -50,6 +50,7 @@ from kohakuengine import (
     capture_globals,         # deprecated; use module-level variables instead
     CaptureGlobals,          # deprecated
     use,
+    use_config,              # compose configs (nested config import)
     Use,
     entrypoint,              # @kogine.entrypoint decorator
     run,
@@ -145,6 +146,48 @@ def use(value: Any) -> Use
 though it would otherwise be skipped by the filter (typically: imported
 callables and classes). The wrapper is transparently unwrapped at
 capture time.
+
+---
+
+### `use_config(path)`
+
+```python
+def use_config(path: str | Path) -> Config
+```
+
+Compose configuration by importing another config file. Call it at the
+top level of a bare (or `_sweep`) config file to merge another config's
+resolved values into the current one:
+
+```python
+# experiment.py
+from kohakuengine import use_config
+
+use_config("base.py")   # inherit everything from base.py
+batch_size = 128        # ...then override what you need
+```
+
+Unlike a plain `import` — which is blocked (the config's directory is
+deliberately not on `sys.path`) and would also bypass the loader —
+`use_config` loads the file through `load_config_file`, so `config_gen`
+/ `CONFIG` bases resolve correctly and locally-defined functions/classes
+plus `_args` / `_kwargs` / `_metadata` are inherited.
+
+- `path` is resolved relative to the **calling config file's directory**.
+- **Your own top-level variables win** over imported ones. Stack multiple
+  `use_config(...)` calls to layer bases; later calls win over earlier.
+- `_args` is inherited (your own, if any, replaces it); `_kwargs` and
+  `_metadata` are merged (your own keys win).
+- Importing a sweep / `ConfigGenerator` config raises `TypeError`;
+  circular imports raise `ValueError`.
+
+The resolved `Config` is returned, so it is also usable programmatically
+(e.g. inside `config_gen`):
+
+```python
+base = use_config("base.py")
+return Config(globals_dict={**base.globals_dict, "lr": 0.5})
+```
 
 ---
 
