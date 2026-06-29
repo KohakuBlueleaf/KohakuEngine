@@ -14,6 +14,14 @@ from kohakuengine.config.generator import ConfigGenerator
 
 _VALID_SWEEP_MODES: frozenset[str] = frozenset({"grid", "zip"})
 
+# Attribute used by ``use_config`` to record imported parent configs on the
+# config module being executed. Underscore-prefixed so ``_filter_globals``
+# never captures it as a data global.
+_USED_CONFIGS_ATTR = "_kogine_used_configs"
+
+# Absolute paths currently being resolved by ``use_config`` (cycle guard).
+_USE_CONFIG_STACK: list[str] = []
+
 
 def _exec_config_module(config_path: Path) -> ModuleType:
     """Load a config file as an importable module."""
@@ -29,6 +37,115 @@ def _exec_config_module(config_path: Path) -> ModuleType:
         sys.modules.pop(module_name, None)
         raise
     return module
+
+
+def _resolve_sibling_path(path: str | Path, caller_globals: dict[str, Any]) -> Path:
+    """Resolve ``path`` relative to the *calling* config file's directory."""
+    p = Path(path)
+    if p.is_absolute():
+        return p.resolve()
+    caller_file = caller_globals.get("__file__")
+    if caller_file:
+        return (Path(caller_file).resolve().parent / p).resolve()
+    return (Path.cwd() / p).resolve()
+
+
+def use_config(path: str | Path) -> Config:
+    """
+    Compose configuration by importing another config file's resolved values.
+
+    Call this at the top level of a bare (or ``_sweep``) config file to merge
+    another config into the current one::
+
+        # experiment.py
+        from kohakuengine import use_config
+
+        use_config("base.py")      # inherit everything from base.py
+        batch_size = 128           # ...then override what you need
+
+    Why a helper (instead of ``import``): a plain ``import`` is blocked (the
+    config's directory is deliberately not on ``sys.path``) and would also
+    bypass the loader -- so ``config_gen`` / ``CONFIG`` bases would not resolve
+    and ``_args`` / ``_kwargs`` / ``_metadata`` and imported helpers would be
+    dropped. ``use_config`` loads the file through the full loader instead.
+
+    Semantics:
+
+    - ``path`` is resolved relative to the calling config file's directory.
+    - The file is loaded via :func:`load_config_file`, so bare, ``CONFIG`` and
+      ``config_gen`` forms all resolve. Importing a sweep / generator config is
+      an error (it is not a single value source).
+    - **Your own top-level variables win** over imported ones. Stack multiple
+      ``use_config(...)`` calls to layer bases; later calls win over earlier.
+    - ``_args`` is inherited (your own, if any, replaces it); ``_kwargs`` and
+      ``_metadata`` are merged (your own keys win).
+
+    Returns the resolved :class:`Config`, so it is also usable programmatically
+    -- e.g. inside ``config_gen``::
+
+        base = use_config("base.py")
+        return Config(globals_dict={**base.globals_dict, "lr": 0.5})
+    """
+    frame = inspect.currentframe()
+    caller_globals = frame.f_back.f_globals if frame and frame.f_back else {}
+    base_path = _resolve_sibling_path(path, caller_globals)
+
+    key = str(base_path)
+    if key in _USE_CONFIG_STACK:
+        chain = " -> ".join([*_USE_CONFIG_STACK, key])
+        raise ValueError(f"Circular use_config() detected: {chain}")
+
+    _USE_CONFIG_STACK.append(key)
+    try:
+        cfg = load_config_file(base_path)
+    finally:
+        _USE_CONFIG_STACK.pop()
+
+    if isinstance(cfg, ConfigGenerator):
+        raise TypeError(
+            f"use_config() cannot import a sweep/generator config: {base_path}. "
+            "Import a single (bare / CONFIG / config_gen) config instead."
+        )
+
+    used = caller_globals.setdefault(_USED_CONFIGS_ATTR, [])
+    used.append(cfg)
+    return cfg
+
+
+def _apply_used_configs(
+    module: ModuleType,
+    own_globals: dict[str, Any],
+    own_args: list,
+    own_kwargs: dict,
+    own_metadata: dict,
+) -> tuple[dict[str, Any], list, dict, dict]:
+    """
+    Layer ``use_config`` parents under this module's own values (child wins).
+
+    Imported configs apply in call order (later overrides earlier); the
+    module's own top-level values override all of them.
+    """
+    used = getattr(module, _USED_CONFIGS_ATTR, None)
+    if not used:
+        return own_globals, own_args, own_kwargs, own_metadata
+
+    globals_dict: dict[str, Any] = {}
+    kwargs: dict[str, Any] = {}
+    metadata: dict[str, Any] = {}
+    args: list = []
+    for cfg in used:
+        globals_dict.update(cfg.globals_dict)
+        kwargs.update(cfg.kwargs)
+        metadata.update(cfg.metadata)
+        if cfg.args:
+            args = list(cfg.args)
+
+    globals_dict.update(own_globals)
+    kwargs.update(own_kwargs)
+    metadata.update(own_metadata)
+    if own_args:
+        args = list(own_args)
+    return globals_dict, args, kwargs, metadata
 
 
 def _extract_meta(module: ModuleType) -> tuple[list, dict, dict]:
@@ -91,6 +208,9 @@ def _expand_sweep(module: ModuleType) -> ConfigGenerator:
 
     base = _filter_globals(vars(module), module.__name__)
     args, kwargs, base_metadata = _extract_meta(module)
+    base, args, kwargs, base_metadata = _apply_used_configs(
+        module, base, args, kwargs, base_metadata
+    )
 
     def generator() -> Iterator[Config]:
         if not sweep:
@@ -127,6 +247,9 @@ def _synthesize_from_module(module: ModuleType) -> Config:
     """Build a Config from a bare config file (Idea 1)."""
     globals_dict = _filter_globals(vars(module), module.__name__)
     args, kwargs, metadata = _extract_meta(module)
+    globals_dict, args, kwargs, metadata = _apply_used_configs(
+        module, globals_dict, args, kwargs, metadata
+    )
     return Config(
         globals_dict=globals_dict,
         args=args,

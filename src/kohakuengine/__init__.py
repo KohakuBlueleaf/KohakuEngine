@@ -21,6 +21,7 @@ from kohakuengine.config import (
     load_config_file,
     load_from_dict,
     use,
+    use_config,
 )
 from kohakuengine.engine import (
     EntrypointNotFound,
@@ -47,6 +48,7 @@ __all__ = [
     "capture_globals",
     "CaptureGlobals",
     "use",
+    "use_config",
     "Use",
     "entrypoint",
     "run",

@@ -12,6 +12,7 @@ from kohakuengine.config.loader import (
     ConfigLoader,
     load_config_file,
     load_from_dict,
+    use_config,
 )
 
 
@@ -36,5 +37,6 @@ __all__ = [
     "capture_globals",
     "CaptureGlobals",
     "use",
+    "use_config",
     "Use",
 ]
