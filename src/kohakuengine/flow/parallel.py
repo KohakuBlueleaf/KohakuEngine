@@ -2,10 +2,7 @@
 
 import os
 import subprocess
-import sys
-import tempfile
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-from pathlib import Path
 from typing import Any
 
 from kohakuengine.config.base import Config
@@ -140,51 +137,7 @@ class Parallel(ScriptWorkflow):
         env = os.environ.copy()
         env["KOGINE_WORKER_ID"] = str(worker_id)
 
-        # Create temp config file
-        if config:
-            temp_config = self._create_temp_config(config)
-            cmd = [
-                sys.executable,
-                "-m",
-                "kohakuengine.cli",
-                "run",
-                str(script.path),
-                "--config",
-                str(temp_config),
-            ]
-        else:
-            cmd = [sys.executable, "-m", "kohakuengine.cli", "run", str(script.path)]
-
-        return subprocess.Popen(cmd, env=env)
-
-    def _create_temp_config(self, config: Config) -> Path:
-        """
-        Create temporary Python config file.
-
-        Args:
-            config: Config to serialize
-
-        Returns:
-            Path to temporary config file
-        """
-        # Create temp file
-        fd, path = tempfile.mkstemp(suffix=".py", prefix="kogine_config_")
-
-        # Write config
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(f"""
-from kohakuengine.config import Config
-
-def config_gen():
-    return Config(
-        globals_dict={config.globals_dict!r},
-        args={config.args!r},
-        kwargs={config.kwargs!r},
-        metadata={config.metadata!r}
-    )
-""")
-
-        return Path(path)
+        return subprocess.Popen(script.cli_command(config), env=env)
 
     def _run_process_pool(self) -> list[Any]:
         """

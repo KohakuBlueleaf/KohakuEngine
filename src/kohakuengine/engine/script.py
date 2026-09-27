@@ -91,31 +91,26 @@ class Script:
             return f"Script(module={self.module_name}, config={config_type})"
         return f"Script(path={self.path}, config={config_type})"
 
+    def cli_command(self, config: Config | None = None) -> list[str]:
+        """``python -m kohakuengine.cli run`` argv for this script and config."""
+        script_ref = self.module_name if self.is_module else str(self.path)
+        cmd = [sys.executable, "-m", "kohakuengine.cli", "run", script_ref]
+        if self.entrypoint:
+            cmd += ["--entrypoint", self.entrypoint]
+        if config is not None:
+            cmd += ["--config", str(_serialize_config(config))]
+        return cmd
+
     def _run_subprocess(
         self, config: Config | None = None
     ) -> subprocess.CompletedProcess:
         """Execute this script in a subprocess via the ``kogine`` CLI."""
         config = config if config is not None else self.config
+        if isinstance(config, ConfigGenerator):
+            config = None
         env = os.environ.copy()
         env.setdefault("KOGINE_WORKER_ID", "0")
-
-        script_ref = self.module_name if self.is_module else str(self.path)
-
-        if config is not None and not isinstance(config, ConfigGenerator):
-            temp_config = _serialize_config(config)
-            cmd = [
-                sys.executable,
-                "-m",
-                "kohakuengine.cli",
-                "run",
-                script_ref,
-                "--config",
-                str(temp_config),
-            ]
-        else:
-            cmd = [sys.executable, "-m", "kohakuengine.cli", "run", script_ref]
-
-        proc = subprocess.Popen(cmd, env=env)
+        proc = subprocess.Popen(self.cli_command(config), env=env)
         proc.wait()
         return proc
 
@@ -124,7 +119,7 @@ def _serialize_config(config: Config) -> Path:
     """Write a Config to a temp ``.py`` file usable by the CLI."""
     fd, path = tempfile.mkstemp(suffix=".py", prefix="kogine_config_")
     body = (
-        "from kohakuengine.config import Config\n\n"
+        "from kohakuengine.config import Config, RawArg\n\n"
         "def config_gen():\n"
         f"    return Config(\n"
         f"        globals_dict={config.globals_dict!r},\n"

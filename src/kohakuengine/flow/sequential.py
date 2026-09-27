@@ -2,9 +2,6 @@
 
 import os
 import subprocess
-import sys
-import tempfile
-from pathlib import Path
 from typing import Any
 
 from kohakuengine.config.base import Config
@@ -106,20 +103,7 @@ class Sequential(ScriptWorkflow):
         env = os.environ.copy()
         env["KOGINE_WORKER_ID"] = "0"
 
-        if config:
-            temp_config = self._create_temp_config(config)
-            cmd = [
-                sys.executable,
-                "-m",
-                "kohakuengine.cli",
-                "run",
-                str(script.path),
-                "--config",
-                str(temp_config),
-            ]
-        else:
-            cmd = [sys.executable, "-m", "kohakuengine.cli", "run", str(script.path)]
-
+        cmd = script.cli_command(config)
         proc = subprocess.Popen(cmd, env=env)
         proc.wait()
         if proc.returncode != 0:
@@ -127,33 +111,6 @@ class Sequential(ScriptWorkflow):
                 f"Subprocess failed with exit code {proc.returncode}: {' '.join(cmd)}"
             )
         return proc
-
-    def _create_temp_config(self, config: Config) -> Path:
-        """
-        Create temporary Python config file.
-
-        Args:
-            config: Config to serialize
-
-        Returns:
-            Path to temporary config file
-        """
-        fd, path = tempfile.mkstemp(suffix=".py", prefix="kogine_config_")
-
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(f"""
-from kohakuengine.config import Config
-
-def config_gen():
-    return Config(
-        globals_dict={config.globals_dict!r},
-        args={config.args!r},
-        kwargs={config.kwargs!r},
-        metadata={config.metadata!r}
-    )
-""")
-
-        return Path(path)
 
     def _run_iterative(self, script: Script) -> list[Any]:
         """
