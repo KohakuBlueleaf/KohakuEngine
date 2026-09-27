@@ -14,6 +14,7 @@ from kohakuengine.config.loader import (
     load_from_dict,
     use_config,
 )
+from kohakuengine.config.raw import RawArg
 
 
 def _config_from_file(config_path, worker_id=None):
@@ -29,14 +30,15 @@ Config.from_dict = staticmethod(_config_from_dict)
 
 
 __all__ = [
+    "CaptureGlobals",
     "Config",
     "ConfigGenerator",
     "ConfigLoader",
+    "RawArg",
+    "Use",
+    "capture_globals",
     "load_config_file",
     "load_from_dict",
-    "capture_globals",
-    "CaptureGlobals",
     "use",
     "use_config",
-    "Use",
 ]
