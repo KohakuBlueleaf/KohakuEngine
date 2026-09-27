@@ -183,7 +183,7 @@ def call_entrypoint(func: Callable, args: list[Any], kwargs: dict[str, Any]) -> 
     else:
         call_kwargs = {k: v for k, v in kwargs.items() if k in params}
 
-    if asyncio.iscoroutinefunction(func):
+    if inspect.iscoroutinefunction(func):
         return asyncio.run(func(*call_args, **call_kwargs))
     return func(*call_args, **call_kwargs)
 
