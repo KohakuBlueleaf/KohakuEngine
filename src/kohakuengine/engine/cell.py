@@ -34,6 +34,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from kohakuengine.engine.coerce import resolve_raw_args
+from kohakuengine.engine.schema import (
+    ScriptSchema,
+    annotation_nodes,
+    evaluate_annotations,
+    resolve_against_namespace,
+)
+
 _MARKER_RE = re.compile(r"^\s*#\s*%%\s*kogine\s*:\s*(\w+)\s*$")
 _FROZEN_NAME = "_KOGINE_FROZEN"
 
@@ -98,17 +106,32 @@ def _parse_cell_from_source(src: str) -> CellInfo | None:
     return CellInfo(config_line=config_line, script_line=script_line)
 
 
-def _cell_assign_nodes(tree: ast.Module, cell: CellInfo) -> list[ast.Assign]:
-    """Return the contiguous run of plain ``Assign`` nodes inside the cell."""
-    out: list[ast.Assign] = []
+CellAssign = ast.Assign | ast.AnnAssign
+
+
+def _target_name(node: CellAssign) -> str:
+    if isinstance(node, ast.AnnAssign):
+        return node.target.id
+    return node.targets[0].id
+
+
+def _is_cell_assign(node: ast.stmt) -> bool:
+    if isinstance(node, ast.AnnAssign):
+        return isinstance(node.target, ast.Name)
+    return isinstance(node, ast.Assign) and all(
+        isinstance(t, ast.Name) for t in node.targets
+    )
+
+
+def _cell_assign_nodes(tree: ast.Module, cell: CellInfo) -> list[CellAssign]:
+    """Return the contiguous run of ``name = v`` / ``name: T [= v]`` in the cell."""
+    out: list[CellAssign] = []
     for node in tree.body:
         if node.lineno <= cell.config_line:
             continue
         if cell.script_line is not None and node.lineno >= cell.script_line:
             break
-        if isinstance(node, ast.Assign) and all(
-            isinstance(t, ast.Name) for t in node.targets
-        ):
+        if _is_cell_assign(node):
             out.append(node)
         else:
             warnings.warn(
@@ -134,7 +157,7 @@ def _is_constant_safe(value: Any) -> bool:
     return False
 
 
-_EVALUATION_CACHE: dict[tuple[str, float], dict[str, Any]] = {}
+_EVALUATION_CACHE: dict[tuple[str, float], ScriptSchema] = {}
 
 
 def evaluate_cell(script_path: Path, cell: CellInfo) -> dict[str, Any]:
@@ -143,16 +166,23 @@ def evaluate_cell(script_path: Path, cell: CellInfo) -> dict[str, Any]:
 
     Imports above the cell are executed so that names referenced in the
     cell resolve correctly. Code *below* the cell does not run.
+    """
+    return dict(evaluate_cell_schema(script_path, cell).defaults)
 
-    Results are memoized for the lifetime of the Python process, keyed on
-    ``(path, mtime)``. This avoids re-evaluating expensive cells when
-    introspection and execution touch the same script in one CLI invocation.
+
+def evaluate_cell_schema(script_path: Path, cell: CellInfo) -> ScriptSchema:
+    """
+    Evaluate the cell and return its values plus its annotations.
+
+    Memoized for the lifetime of the process, keyed on ``(path, mtime)``, so
+    introspection and execution in one CLI invocation evaluate the cell once.
     """
     script_path = Path(script_path).resolve()
     mtime = script_path.stat().st_mtime
     cache_key = (str(script_path), mtime)
     if cache_key in _EVALUATION_CACHE:
-        return dict(_EVALUATION_CACHE[cache_key])
+        cached = _EVALUATION_CACHE[cache_key]
+        return ScriptSchema(dict(cached.defaults), dict(cached.annotations))
 
     src = script_path.read_text(encoding="utf-8")
     tree = ast.parse(src, filename=str(script_path))
@@ -174,14 +204,17 @@ def evaluate_cell(script_path: Path, cell: CellInfo) -> dict[str, Any]:
     exec(compile(preamble_mod, str(script_path), "exec"), sandbox)
     exec(compile(cell_mod, str(script_path), "exec"), sandbox)
 
-    result = {
+    values = {
         name: sandbox[name]
         for node in assigns
-        for name in (node.targets[0].id,)
+        for name in (_target_name(node),)
         if name in sandbox
     }
-    _EVALUATION_CACHE[cache_key] = dict(result)
-    return result
+    annotations = evaluate_annotations(
+        annotation_nodes(assigns), sandbox, str(script_path)
+    )
+    _EVALUATION_CACHE[cache_key] = ScriptSchema(values, annotations)
+    return ScriptSchema(dict(values), dict(annotations))
 
 
 def clear_cell_cache() -> None:
@@ -205,7 +238,7 @@ def _build_frozen_node(name: str) -> ast.expr:
 
 
 def _rewrite_assigns(
-    cell_nodes: Iterable[ast.Assign],
+    cell_nodes: Iterable[CellAssign],
     resolved: dict[str, Any],
 ) -> dict[str, Any]:
     """
@@ -216,7 +249,7 @@ def _rewrite_assigns(
     """
     frozen: dict[str, Any] = {}
     for node in cell_nodes:
-        name = node.targets[0].id
+        name = _target_name(node)
         if name not in resolved:
             continue
         value = resolved[name]
@@ -225,9 +258,9 @@ def _rewrite_assigns(
         else:
             frozen[name] = value
             new_value = _build_frozen_node(name)
-        ast.copy_location(new_value, node.value)
+        anchor = node.value if node.value is not None else node
         for child in ast.walk(new_value):
-            ast.copy_location(child, node.value)
+            ast.copy_location(child, anchor)
         node.value = new_value
     return frozen
 
@@ -258,11 +291,16 @@ def execute_with_cell(
         raise RuntimeError("execute_with_cell called on a script without a cell")
 
     assigns = _cell_assign_nodes(tree, cell)
-    declared = {n.targets[0].id for n in assigns}
+    declared = {_target_name(n) for n in assigns}
 
-    evaluated = evaluate_cell(script_path, cell)
+    schema = evaluate_cell_schema(script_path, cell)
+    evaluated = schema.defaults
     overrides = overrides or {}
-    cell_overrides = {k: v for k, v in overrides.items() if k in declared}
+    cell_overrides = resolve_raw_args(
+        {k: v for k, v in overrides.items() if k in declared},
+        schema.defaults,
+        schema.annotations,
+    )
     non_cell_overrides = {k: v for k, v in overrides.items() if k not in declared}
 
     resolved = {**evaluated, **cell_overrides}
@@ -274,7 +312,10 @@ def execute_with_cell(
     code = compile(tree, filename=str(script_path), mode="exec")
     exec(code, module_dict)
 
-    # Apply non-cell overrides via straight setattr-style injection.
+    # Non-cell overrides resolve against the executed module, then are set.
+    non_cell_overrides = resolve_against_namespace(
+        non_cell_overrides, module_dict, script_path
+    )
     for k, v in non_cell_overrides.items():
         module_dict[k] = v
 

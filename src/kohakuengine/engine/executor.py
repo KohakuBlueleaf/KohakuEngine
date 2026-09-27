@@ -3,9 +3,10 @@
 import importlib
 import importlib.util
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from kohakuengine.config.base import Config
 from kohakuengine.engine.cell import execute_with_cell, parse_cell
@@ -15,6 +16,7 @@ from kohakuengine.engine.entrypoint import (
     find_entrypoint,
 )
 from kohakuengine.engine.injector import GlobalInjector
+from kohakuengine.engine.schema import resolve_against_namespace
 from kohakuengine.utils import add_script_dir_to_path, importable_module_name
 
 if TYPE_CHECKING:
@@ -53,8 +55,7 @@ class ScriptExecutor:
     def _load_module(self, config: Config | None) -> ModuleType:
         if self.script.is_module and self.script.module_name:
             module = self._load_importable_module()
-            if config is not None and config.globals_dict:
-                GlobalInjector.inject(module, config.globals_dict)
+            self._inject(module, config, getattr(module, "__file__", None))
             self._module = module
             return module
 
@@ -63,11 +64,21 @@ class ScriptExecutor:
             module = self._load_with_cell(script_path, config)
         else:
             module = self._load_file_module(script_path)
-            if config is not None and config.globals_dict:
-                GlobalInjector.inject(module, config.globals_dict)
+            self._inject(module, config, script_path)
 
         self._module = module
         return module
+
+    @staticmethod
+    def _inject(
+        module: ModuleType, config: Config | None, source_path: str | Path | None
+    ) -> None:
+        if config is None or not config.globals_dict:
+            return
+        values = resolve_against_namespace(
+            config.globals_dict, vars(module), source_path
+        )
+        GlobalInjector.inject(module, values)
 
     def _load_file_module(self, script_path: Path) -> ModuleType:
         add_script_dir_to_path(script_path)

@@ -3,10 +3,8 @@
 import argparse
 import difflib
 import io
-import itertools
 import sys
 from pathlib import Path
-from typing import Any, Iterator
 
 from kohakuengine import __version__
 from kohakuengine.config import Config, ConfigGenerator, load_config_file
@@ -14,9 +12,11 @@ from kohakuengine.engine import (
     EntrypointNotFound,
     Script,
     ScriptExecutor,
-    coerce_globals,
-    introspect,
+    introspect_schema,
+    layer_overrides,
+    split_top_level,
 )
+from kohakuengine.engine.coerce import describe_annotation
 from kohakuengine.flow import Parallel, Sequential
 
 _TYPO_CUTOFF = 0.6
@@ -145,49 +145,8 @@ def _parse_sweep(items: list[str]) -> dict[str, list[str]]:
         if "=" not in item:
             raise SystemExit(f"--sweep must be KEY=V1,V2,..., got {item!r}")
         key, _, values = item.partition("=")
-        out[key.strip()] = [v.strip() for v in values.split(",")]
+        out[key.strip()] = split_top_level(values)
     return out
-
-
-def _sweep_to_generator(
-    base: Config | None, sweep: dict[str, list[str]], defaults: dict[str, Any] | None
-) -> ConfigGenerator:
-    axes = list(sweep.keys())
-    value_lists = [sweep[k] for k in axes]
-    base_globals = dict(base.globals_dict) if base else {}
-    base_args = list(base.args) if base else []
-    base_kwargs = dict(base.kwargs) if base else {}
-    base_meta = dict(base.metadata) if base else {}
-
-    def gen() -> Iterator[Config]:
-        for combo in itertools.product(*value_lists):
-            overrides = dict(zip(axes, combo))
-            merged = {**base_globals, **overrides}
-            if defaults:
-                merged = coerce_globals(merged, defaults)
-            yield Config(
-                globals_dict=merged,
-                args=list(base_args),
-                kwargs=dict(base_kwargs),
-                metadata={**base_meta, **overrides},
-            )
-
-    return ConfigGenerator(gen())
-
-
-def _apply_set_and_strict(
-    config: Config | None,
-    script_path: str,
-    set_dict: dict[str, str],
-    strict: bool,
-) -> Config | None:
-    if not set_dict and not strict:
-        return config
-    defaults = introspect(script_path)
-    base = config or Config(globals_dict={})
-    merged = {**base.globals_dict, **set_dict}
-    base.globals_dict = coerce_globals(merged, defaults, strict=strict)
-    return base
 
 
 # ---------------------------------------------------------------------------
@@ -196,24 +155,20 @@ def _apply_set_and_strict(
 
 
 def cmd_run(args: argparse.Namespace) -> None:
+    script = Script(args.script, entrypoint=args.entrypoint)
     config: Config | ConfigGenerator | None = None
     if args.config:
         config = load_config_file(args.config)
 
-    set_dict = _parse_set(args.set)
-    sweep_dict = _parse_sweep(args.sweep)
-
-    if sweep_dict:
-        base_for_sweep = config if isinstance(config, Config) else None
-        defaults = (
-            introspect(args.script) if not args.script.endswith(":__init__") else None
-        )
-        config = _sweep_to_generator(base_for_sweep, sweep_dict, defaults)
-
-    if isinstance(config, Config) or config is None:
-        config = _apply_set_and_strict(config, args.script, set_dict, args.strict)
-
-    script = Script(args.script, config=config, entrypoint=args.entrypoint)
+    declared = introspect_schema(script.path).declared if args.strict else None
+    config = layer_overrides(
+        config,
+        set_values=_parse_set(args.set),
+        sweep_values=_parse_sweep(args.sweep),
+        strict=args.strict,
+        declared=declared,
+    )
+    script.config = config
 
     if isinstance(config, ConfigGenerator):
         print("Config is a generator, running sequentially.")
@@ -317,12 +272,13 @@ def cmd_config_check(args: argparse.Namespace) -> None:
         provided_keys = set(config.globals_dict.keys())
 
     try:
-        defaults = introspect(args.script)
+        schema = introspect_schema(args.script)
     except FileNotFoundError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(2)
 
-    declared = set(defaults.keys())
+    defaults = schema.defaults
+    declared = schema.declared
     hits = provided_keys & declared
     missing = provided_keys - declared
 
@@ -333,7 +289,10 @@ def cmd_config_check(args: argparse.Namespace) -> None:
             if isinstance(config, Config)
             else next(iter(configs)).globals_dict.get(k, "<sweep>")
         )
-        print(f"  [OK]  {k}: {defaults[k]!r} -> {new_value!r}")
+        old = repr(defaults[k]) if k in defaults else "<no default>"
+        if k in schema.annotations:
+            old += f" ({describe_annotation(schema.annotations[k])})"
+        print(f"  [OK]  {k}: {old} -> {new_value!r}")
     typos = 0
     new_vars = 0
     for k in sorted(missing):

@@ -3,14 +3,13 @@
 Used by:
 
 - :func:`kohakuengine.cli.cmd_config_check` -- diff config keys vs. script defaults.
-- :func:`kohakuengine.engine.coerce.coerce_globals` -- type coercion against
-  the script's default values.
+- ``--strict`` pre-flight -- reject override keys the script does not declare.
 
 The script is imported under a non-``__main__`` module name so its
 ``if __name__ == "__main__":`` guard does not fire.
 
-When the script has a config cell (Idea 7), we extract the declared names
-*statically* via the cell parser -- no module-level code below the cell runs.
+When the script has a config cell (Idea 7), only the preamble and the cell
+are evaluated -- no module-level code below the cell runs.
 """
 
 import importlib.util
@@ -20,7 +19,8 @@ from types import ModuleType
 from typing import Any
 
 from kohakuengine.config.base import _filter_globals
-from kohakuengine.engine.cell import CellInfo, evaluate_cell, parse_cell
+from kohakuengine.engine.cell import evaluate_cell_schema, parse_cell
+from kohakuengine.engine.schema import ScriptSchema, source_annotations
 from kohakuengine.utils import add_script_dir_to_path
 
 
@@ -40,20 +40,14 @@ def _import_no_main(script_path: Path) -> ModuleType:
     return module
 
 
-def introspect(script_path: str | Path) -> dict[str, Any]:
+def introspect_schema(script_path: str | Path) -> ScriptSchema:
     """
-    Return the script's data-only defaults.
+    Return the script's defaults and top-level annotations.
 
-    If the script has a config cell, only the cell's declared names are
-    returned and module-level code below the cell is not executed.
-    Otherwise the script is imported (without firing its ``__main__``
-    guard) and module-level data is extracted via :func:`_filter_globals`.
-
-    Args:
-        script_path: Path to a ``.py`` script.
-
-    Returns:
-        Dict of ``{name: default_value}`` -- the configurable surface.
+    With a config cell, only the cell's names form the schema (annotation-only
+    ``name: T`` lines included). Otherwise the script is imported without
+    firing its ``__main__`` guard; defaults come from :func:`_filter_globals`
+    and annotations from its top-level ``name: T [= v]`` statements.
     """
     script_path = Path(script_path)
     if not script_path.exists():
@@ -61,12 +55,16 @@ def introspect(script_path: str | Path) -> dict[str, Any]:
 
     cell = parse_cell(script_path)
     if cell is not None:
-        return _introspect_cell_only(script_path, cell)
+        return evaluate_cell_schema(script_path, cell)
 
     module = _import_no_main(script_path)
-    return _filter_globals(vars(module), module.__name__)
+    namespace = vars(module)
+    return ScriptSchema(
+        defaults=_filter_globals(namespace, module.__name__),
+        annotations=source_annotations(script_path, namespace),
+    )
 
 
-def _introspect_cell_only(script_path: Path, cell: CellInfo) -> dict[str, Any]:
-    """Evaluate ONLY the cell + its preamble (imports above the cell)."""
-    return evaluate_cell(script_path, cell)
+def introspect(script_path: str | Path) -> dict[str, Any]:
+    """Return the script's data-only defaults (``introspect_schema().defaults``)."""
+    return introspect_schema(script_path).defaults
