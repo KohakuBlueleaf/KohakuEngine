@@ -11,7 +11,7 @@ Public API (Idea-numbered for cross-reference with plans/ux-redesign-v0.2/):
 - :class:`FormatArg`, :class:`RawArg`, :func:`coerce_value` -- typed overrides.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.5.0"
 
 from kohakuengine.config import (
     CaptureGlobals,

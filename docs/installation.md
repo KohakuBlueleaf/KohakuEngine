@@ -45,7 +45,7 @@ kogine --version
 This should print the installed version, for example:
 
 ```
-kogine 0.2.0
+kogine 0.5.0
 ```
 
 You can also verify the Python import:

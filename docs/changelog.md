@@ -5,7 +5,74 @@ All notable changes to KohakuEngine are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] — 2026-09-27
+
+### Added
+
+- **Annotation-driven override coercion.** `--set`, `--sweep`, and
+  `run(set_overrides=...)` values are coerced to the name's top-level
+  annotation when it has one, else to its default's type:
+
+  ```python
+  lr: float = 1                 # --set lr=0.5      -> 0.5 (not a failed int())
+  steps: Optional[int] = None   # --set steps=100   -> 100; steps=none -> None
+  dims: list[int] = [64]        # --set dims=64,128 -> [64, 128]
+  mode: Mode = Mode.TRAIN       # --set mode=eval   -> Mode.EVAL
+  ```
+
+  Supported: builtin scalars, `None`, `Optional` / `Union`, `Literal`,
+  `list` / `tuple` / `set` / `frozenset` / `dict` and their
+  `collections.abc` forms (recursive), `Enum`, `NewType`, `Final[T]`,
+  and any annotated class via `cls(value)` (`Path`, `Decimal`, ...).
+  Un-annotated container defaults infer their element type
+  (`[64, 128]` → `list[int]`).
+- **Custom override parsers.** A class with a `format_arg` classmethod
+  is built with `Class.format_arg(value)`; for third-party types use
+  `Annotated[T, FormatArg(fn)]`.
+- **Annotated assignments in config cells.** `name: T = value` and
+  annotation-only `name: T` lines are valid cell statements.
+- **`introspect_schema()` / `ScriptSchema`.** Defaults plus top-level
+  annotations; `--strict` and `kogine config check` accept
+  annotation-only names, and `config check` prints annotations.
+- **`coerce_value()`, `RawArg`, `layer_overrides()`,
+  `evaluate_cell_schema()`, `Script.cli_command()`** in the public API.
+- **Bracket-aware `--sweep` splitting.** `--sweep dims=[1,2],[3]` gives
+  two values; commas inside brackets or quotes do not split.
+
+### Changed
+
+- **Overrides are coerced when the script loads**, against its live
+  namespace, instead of against a separate introspection import. Classes
+  and Enums in annotations are the script's own objects (`mode is
+  Mode.EVAL` holds for a script-local Enum), and coercion happens in the
+  child for `--subprocess` and subprocess workflows. `--set` without
+  `--strict` no longer imports the script an extra time.
+- **Only override values are coerced.** Values from a config file are
+  injected as written, including under `--set` / `--strict`.
+- **`int` coercion is lossless.** `"1e3"` and `"0x10"` parse; `"0.5"` or
+  `0.5` for an `int` name fails instead of truncating.
+- **`--strict` unknown-key errors** list every unknown key with a
+  "did you mean" suggestion.
+- **Version is single-sourced** from `kohakuengine.__version__`
+  (`pyproject.toml` declares it dynamic).
+
+### Fixed
+
+- `--set` combined with `--sweep` was dropped; it now applies to every
+  sweep run.
+- `--set` / `--strict` with a generator config file were ignored; they
+  now apply to every generated config.
+- `--sweep` with a generator config file discarded the file; the result
+  is now every generated config × every sweep value.
+- `--set` / `--sweep` / `--strict` crashed for `script.py:func` and
+  `package.module` script specs.
+- `--subprocess` (and subprocess workflows) dropped the entrypoint and
+  ran module-form scripts by file path.
+- `kohakuengine.__version__` reported `0.2.0`.
+- Async entrypoints are detected with `inspect.iscoroutinefunction`
+  (`asyncio.iscoroutinefunction` is deprecated in Python 3.14).
+
+## [0.4.0] — 2026-06-29
 
 ### Added
 
@@ -24,6 +91,8 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   relative to the calling config file; your own values win over imported
   ones; stacking multiple calls layers bases (later wins). Importing a
   sweep config raises, and circular imports are detected.
+
+## [0.3.0] — 2026-06-27
 
 ### Fixed
 
@@ -148,5 +217,8 @@ to work without modification; the new features are additive.
   - Test suite covering configs, executors, entrypoint discovery, and
     workflows.
 
+[0.5.0]: https://github.com/KohakuBlueleaf/KohakuEngine/releases/tag/v0.5.0
+[0.4.0]: https://github.com/KohakuBlueleaf/KohakuEngine/releases/tag/v0.4.0
+[0.3.0]: https://github.com/KohakuBlueleaf/KohakuEngine/releases/tag/v0.3.0
 [0.2.0]: https://github.com/KohakuBlueleaf/KohakuEngine/releases/tag/v0.2.0
 [0.0.2]: https://github.com/KohakuBlueleaf/KohakuEngine/releases/tag/v0.0.2
