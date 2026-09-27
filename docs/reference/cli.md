@@ -34,10 +34,16 @@ kogine run SCRIPT [--config CFG] [--entrypoint NAME]
 | `SCRIPT`              | Path to a `.py` file, `path.py:func`, or `package.module`. |
 | `--config`, `-c`      | Path to a Python config file.                            |
 | `--entrypoint`, `-e`  | Explicit entrypoint name (overrides discovery cascade).  |
-| `--set KEY=VALUE`     | Override one config key. Repeatable. Type-coerced.       |
-| `--sweep KEY=V1,V2`   | Sweep one axis. Repeatable; multiple flags compose as cartesian product. |
-| `--strict`            | Error on overrides that do not match a script default.   |
-| `--subprocess`        | Run the script in a fresh subprocess via the CLI.        |
+| `--set KEY=VALUE`     | Override one config key. Repeatable. Coerced to the script's annotation for `KEY`, else its default's type. |
+| `--sweep KEY=V1,V2`   | Sweep one axis. Repeatable; multiple flags compose as cartesian product. Values split on commas outside brackets/quotes (`dims=[1,2],[3]`). |
+| `--strict`            | Error on override or config keys the script does not declare, and on failed coercions. |
+| `--subprocess`        | Run the script in a fresh subprocess via the CLI (entrypoint and overrides are forwarded; coercion happens in the child). |
+
+`--set` applies to every run: combined with `--sweep` or a generator
+config it is layered onto each generated config. A key given to both
+`--set` and `--sweep` is an error. See
+[Overrides and validation](../guides/overrides-and-validation.md#type-coercion)
+for the full coercion table.
 
 **Examples:**
 
@@ -46,6 +52,7 @@ kogine run train.py
 kogine run train.py --config production.py
 kogine run train.py --set learning_rate=0.05 --set batch_size=128
 kogine run train.py --sweep learning_rate=0.001,0.01,0.1
+kogine run train.py --sweep dims=[64,64],[128,128] --set epochs=2
 kogine run train.py --config base.py --set epochs=1 --strict
 kogine run train.py:custom_train
 kogine run package.module --entrypoint go
@@ -190,12 +197,15 @@ Output:
 Config: production.py    Script: train.py
 
   [OK]  batch_size: 32 -> 128
-  [OK]  learning_rate: 0.001 -> 0.05
+  [OK]  learning_rate: 0.001 (float) -> 0.05
   [??]  lr: not in script (did you mean learning_rate?)
   [+]   experiment_tag: new var (not in script defaults)
 
 2 hits, 1 typo warning(s), 1 new var(s).
 ```
+
+Annotated names show their annotation in parentheses; annotation-only
+names (`steps: int`) show `<no default>`.
 
 | Symbol | Meaning                                                |
 | ------ | ------------------------------------------------------ |

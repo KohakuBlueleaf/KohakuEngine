@@ -49,9 +49,9 @@ The script runs as if executed directly — except its globals start out
 with the injected values rather than the defaults written in the source.
 
 The Python language enforces no schema on globals, which is what makes
-this work. KohakuEngine adds no schema either; the script's own defaults
-double as the schema when needed (for type coercion and pre-flight
-checks).
+this work. KohakuEngine adds no schema either; the script's own
+annotations and defaults double as the schema when needed (for type
+coercion and pre-flight checks).
 
 ## Three layers, no surprises
 
@@ -117,11 +117,13 @@ the sugar is purely additive.
 
 ### 5. The script is the schema
 
-Type coercion and pre-flight validation use the script's own default
-values as the type schema. There is no separate `.yaml` or `.proto`
-to keep in sync. This is the simplest possible thing that solves the
-real problem (typos and string-vs-int confusion in CLI overrides) and
-no more.
+Type coercion and pre-flight validation use the script's own top-level
+annotations — and, for un-annotated names, the types of its default
+values — as the type schema. There is no separate `.yaml` or `.proto`
+to keep in sync. Overrides are coerced when the script loads, against
+its live namespace, so annotation classes are the script's own objects.
+Custom types plug in with a `format_arg` classmethod or
+`Annotated[T, FormatArg(fn)]`.
 
 ### 6. Failures should be loud and informative
 

@@ -18,14 +18,21 @@ kohakuengine/
 │   ├── base.py          # Config, Use, CaptureGlobals, capture_globals, use
 │   ├── generator.py     # ConfigGenerator
 │   ├── loader.py        # load_config_file, load_from_dict, ConfigLoader
+│   ├── raw.py           # RawArg
 │   └── types.py         # ConfigProvider, Configurable Protocols
 ├── engine/
 │   ├── cell.py          # config-cell engine
-│   ├── coerce.py        # schema-by-example coercion
+│   ├── coerce/          # annotation-driven coercion
+│   │   ├── text.py      #   split_top_level, parse_literal
+│   │   ├── scalars.py   #   COERCERS
+│   │   ├── value.py     #   coerce_value, FormatArg, infer_annotation
+│   │   └── globals.py   #   coerce_globals, resolve_raw_args
 │   ├── entrypoint.py    # entrypoint discovery + @entrypoint decorator
 │   ├── executor.py      # ScriptExecutor
 │   ├── injector.py      # GlobalInjector
-│   ├── introspect.py    # introspect()
+│   ├── introspect.py    # introspect(), introspect_schema()
+│   ├── overrides.py     # layer_overrides
+│   ├── schema.py        # ScriptSchema, annotation evaluation
 │   └── script.py        # Script dataclass
 └── flow/
     ├── base.py          # Workflow / ScriptWorkflow ABCs
@@ -55,7 +62,12 @@ from kohakuengine import (
     entrypoint,              # @kogine.entrypoint decorator
     run,
     introspect,
+    introspect_schema,       # defaults + top-level annotations
+    ScriptSchema,
     coerce_globals,
+    coerce_value,            # coerce one value to one annotation
+    FormatArg,               # Annotated[T, FormatArg(fn)] override parser
+    RawArg,                  # override value awaiting coercion
     load_config_file,
     load_from_dict,
     EntrypointNotFound,
@@ -315,6 +327,13 @@ An explicit `entrypoint=` keyword wins over the colon syntax.
 (Attached at import time via `engine/__init__.py`.) Executes the script.
 `use_subprocess=True` re-launches via `python -m kohakuengine.cli`.
 
+#### `script.cli_command(config=None) -> list[str]`
+
+The `python -m kohakuengine.cli run ...` argv for this script: module
+name or path, `--entrypoint` when set, and `--config <temp file>` when a
+`Config` is given (written by the repr-based serializer, which
+preserves `RawArg` values). Used by every subprocess execution path.
+
 #### Properties
 
 | Attribute     | Description                                              |
@@ -533,6 +552,18 @@ Evaluates only the cell (plus preamble imports) and returns the
 `{name: value}` dict. Memoized per `(absolute path, mtime)` for the
 lifetime of the process.
 
+Cell statements are `name = value`, `name: T = value`, or `name: T`
+(annotation only: declared, no default).
+
+### `evaluate_cell_schema`
+
+```python
+def evaluate_cell_schema(script_path: Path, cell: CellInfo) -> ScriptSchema
+```
+
+Same evaluation (and cache) as `evaluate_cell`, returning the cell's
+values and its annotations.
+
 ### `clear_cell_cache`
 
 ```python
@@ -552,12 +583,14 @@ def execute_with_cell(
 ) -> tuple[ast.Module, dict[str, Any], dict[str, Any]]
 ```
 
-The full pipeline: parse, evaluate cell, rewrite AST, prime
-`linecache`, compile with the original filename, and execute into
-`module_dict`. Returns `(rewritten_tree, evaluated_cell_state, frozen_dict)`.
+The full pipeline: parse, evaluate cell, coerce `RawArg` cell overrides
+against the cell schema, rewrite AST, prime `linecache`, compile with
+the original filename, and execute into `module_dict`. Returns
+`(rewritten_tree, evaluated_cell_state, frozen_dict)`.
 
-Non-cell overrides are applied via direct dictionary assignment after
-the rewritten module body has run.
+Non-cell overrides are coerced against the executed module and applied
+via direct dictionary assignment after the rewritten module body has
+run.
 
 ---
 
@@ -569,31 +602,129 @@ the rewritten module body has run.
 def introspect(script_path: str | Path) -> dict[str, Any]
 ```
 
-Returns the script's data-only defaults without firing its entrypoint.
+Returns the script's data-only defaults without firing its entrypoint
+(`introspect_schema(script_path).defaults`).
 
 For scripts with a config cell, only the cell body is evaluated;
 module-level code below the cell does not run. For scripts without a
 cell, the module is imported under a `_kogine_introspect_*` name so the
 `if __name__ == "__main__":` guard does not fire.
 
+### `introspect_schema`
+
+```python
+def introspect_schema(script_path: str | Path) -> ScriptSchema
+```
+
+Like `introspect`, plus the script's top-level annotations. For a cell
+script both come from the cell only.
+
+### `class ScriptSchema`
+
+```python
+@dataclass
+class ScriptSchema:
+    defaults:    dict[str, Any]
+    annotations: dict[str, Any]
+    @property
+    def declared(self) -> set[str]     # defaults ∪ annotations
+```
+
+Annotations are evaluated from the AST in the script's namespace, so
+string annotations and `from __future__ import annotations` resolve;
+`Final[T]` becomes `T`. An unresolvable annotation warns and is omitted.
+
+### `coerce_value`
+
+```python
+def coerce_value(value: Any, annotation: Any, *, explicit: bool = True) -> Any
+```
+
+Coerces one value to one annotation; raises `TypeError` / `ValueError`.
+Supports builtin scalars, `None`, `Optional` / `Union` (declared order),
+`Literal`, `list` / `tuple` / `set` / `frozenset` / `dict` and their
+`collections.abc` forms (recursively), `Enum`, `NewType`,
+`Annotated[T, FormatArg(fn)]`, classes with a `format_arg` classmethod,
+and any other class via `cls(value)`. `explicit=False` marks an
+annotation inferred from a default: plain classes that are not value
+types are then passed through. See
+[Type coercion](../guides/overrides-and-validation.md#type-coercion).
+
+### `class FormatArg`
+
+```python
+@dataclass(frozen=True)
+class FormatArg:
+    func: Callable[[Any], Any]
+```
+
+`typing.Annotated` metadata naming the parser for override values:
+`x: Annotated[T, FormatArg(parse)] = ...`. The last `FormatArg` wins.
+
+A class can instead define `format_arg` as a classmethod; `coerce_value`
+calls `cls.format_arg(value)` for any value that is not already an
+instance.
+
+### `class RawArg`
+
+```python
+@dataclass(frozen=True)
+class RawArg:
+    value: Any
+    strict: bool = False
+```
+
+An override value awaiting coercion. `--set`, `--sweep`, and
+`run(set_overrides=...)` put `RawArg` values into `Config.globals_dict`;
+the executor coerces them when the script loads, against the script's
+live namespace (annotation first, then default type). Plain values in
+`globals_dict` are injected unchanged. `strict=True` makes a failed
+coercion or undeclared key raise.
+
 ### `coerce_globals`
 
 ```python
 def coerce_globals(
     globals_dict: dict[str, Any],
-    defaults: dict[str, Any],
+    defaults: Mapping[str, Any],
     *,
     strict: bool = False,
+    annotations: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]
 ```
 
-Coerces each entry of `globals_dict` to the type of the corresponding
-default. Pass-through for unknown types. With `strict=True`, unknown
-keys raise `KeyError` and coercion failures raise `TypeError`.
+Coerces each entry of `globals_dict` to `annotations[key]` if present,
+else to a type inferred from `defaults[key]` (homogeneous containers
+infer their element type; `None` and non-value classes pass through).
+`RawArg` values are unwrapped, their `strict` OR-ed with `strict`. With
+strict, unknown keys raise `KeyError` and coercion failures raise
+`TypeError`; otherwise failures warn and pass the raw value through.
 
-The coercion table (`COERCERS`) ships with handlers for `bool`, `int`,
-`float`, `str`. Booleans recognise `true`/`1`/`yes`/`y`/`on` and the
-negations as falsy.
+The scalar table (`COERCERS`) handles `bool`, `int`, `float`, `complex`,
+`str`, `bytes`, and `NoneType`. Booleans recognise
+`true`/`1`/`yes`/`y`/`on` and `false`/`0`/`no`/`n`/`off`.
+
+### `layer_overrides`
+
+```python
+def layer_overrides(
+    config: Config | ConfigGenerator | None,
+    *,
+    set_values: Mapping[str, Any] | None = None,
+    sweep_values: Mapping[str, list[Any]] | None = None,
+    strict: bool = False,
+    declared: set[str] | None = None,
+) -> Config | ConfigGenerator | None
+```
+
+The shared implementation of `--set` / `--sweep` / `--strict`. Every
+base config (the `Config`, or each config a generator yields, lazily)
+gets `set_values` and, per sweep combination, the sweep values, all
+wrapped in `RawArg`; sweep values are also recorded in `metadata`. A key
+in both `set_values` and `sweep_values` raises `ValueError`. With
+`declared`, override keys and base-config keys outside it raise
+`KeyError` with typo suggestions. Returns a `Config` unless a sweep or a
+generator base makes it a `ConfigGenerator`.
 
 ---
 
@@ -614,9 +745,11 @@ def run(
 ```
 
 One-call wrapper mirroring `kogine run`. Loads `config_path`, merges in
-inline `globals_dict`/`args`/`kwargs`, applies `set_overrides` with
-[`coerce_globals`](#coerce_globals), optionally enforces `strict`, then
-executes via `ScriptExecutor`.
+inline `globals_dict`/`args`/`kwargs`, layers `set_overrides` with
+[`layer_overrides`](#layer_overrides) (coerced at load time like
+`--set`), optionally enforces `strict`, then executes via
+`ScriptExecutor`. `script_path` accepts every `Script` form
+(`train.py:func`, `package.module`).
 
 ---
 
@@ -656,4 +789,5 @@ not enforced by the engine.
 
 ## Version
 
-`kohakuengine.__version__` is the canonical version string.
+`kohakuengine.__version__` is the canonical version string; the package
+metadata version is read from it at build time.

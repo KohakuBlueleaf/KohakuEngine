@@ -56,17 +56,25 @@ src/kohakuengine/
 │   ├── base.py        # Config, Use, CaptureGlobals, _filter_globals
 │   ├── generator.py   # ConfigGenerator
 │   ├── loader.py      # load_config_file, load_from_dict, ConfigLoader
+│   ├── raw.py         # RawArg (override value awaiting coercion)
 │   └── types.py       # ConfigProvider / Configurable protocols
 │
 ├── engine/
 │   ├── __init__.py    # attaches Script.run; re-exports
-│   ├── script.py      # Script dataclass + _serialize_config
-│   ├── executor.py    # ScriptExecutor
+│   ├── script.py      # Script dataclass, cli_command, _serialize_config
+│   ├── executor.py    # ScriptExecutor (resolves RawArg at load time)
 │   ├── entrypoint.py  # cascade + @entrypoint decorator
 │   ├── injector.py    # GlobalInjector
 │   ├── cell.py        # config-cell engine
-│   ├── coerce.py      # coerce_globals (schema-by-example)
-│   └── introspect.py  # introspect()
+│   ├── schema.py      # ScriptSchema, annotation evaluation
+│   ├── overrides.py   # layer_overrides (--set / --sweep / strict keys)
+│   ├── introspect.py  # introspect(), introspect_schema()
+│   └── coerce/
+│       ├── __init__.py
+│       ├── text.py    # split_top_level, parse_literal
+│       ├── scalars.py # COERCERS for builtin scalars
+│       ├── value.py   # coerce_value, FormatArg, infer_annotation
+│       └── globals.py # coerce_globals, resolve_raw_args
 │
 └── flow/
     ├── __init__.py
@@ -113,19 +121,25 @@ A single-script execution under `kogine run script.py --config c.py`:
 
 1. **CLI parses arguments.** `cli.cmd_run` reads `args.script`,
    `args.config`, `--set`, `--sweep`, etc.
-2. **Loader runs.** `load_config_file(args.config)` produces a `Config`
-   or `ConfigGenerator`.
-3. **Optional coercion.** If `--set` or `--strict` is present, the CLI
-   calls `introspect(args.script)` to get defaults, then `coerce_globals`
-   to apply type coercion.
-4. **Script construction.** `Script(args.script, config=config,
+2. **Script construction.** `Script(args.script,
    entrypoint=args.entrypoint)` parses the path and detects whether the
    target is a file or an importable module.
+3. **Loader runs.** `load_config_file(args.config)` produces a `Config`
+   or `ConfigGenerator`.
+4. **Override layering.** `layer_overrides` merges `--set` and every
+   `--sweep` combination onto each base config (one `Config` or each
+   generated one, lazily). Override values are wrapped in `RawArg`.
+   With `--strict`, `introspect_schema(script.path)` supplies the
+   declared names and unknown keys raise here, before anything runs.
 5. **Executor.** `ScriptExecutor(script).execute()`:
    - If the script has a cell, `_load_with_cell` delegates to
-     `execute_with_cell` (cell engine).
-   - Otherwise, `_load_file_module` imports the script under a
-     `_kohaku_script_*` name and the injector applies
+     `execute_with_cell` (cell engine), which coerces `RawArg` cell
+     overrides against the cell's values and annotations before the
+     AST rewrite, and the remaining overrides against the executed
+     module.
+   - Otherwise, `_load_file_module` imports the script under its
+     importable name; `RawArg` values are coerced against the loaded
+     module's annotations and values, then the injector applies
      `Config.globals_dict`.
 6. **Entrypoint cascade.** `find_entrypoint` selects the function to
    call.

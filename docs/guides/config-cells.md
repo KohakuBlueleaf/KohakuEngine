@@ -40,7 +40,7 @@ Two comment markers delimit a cell:
 ```
 
 The `# %% kogine:script` marker is optional. Without it, the cell ends
-at the next non-`Assign` top-level statement.
+at the next top-level statement that is not a simple assignment.
 
 The marker tokens use `kogine:` as a namespace to avoid clashing with
 Jupytext / VS Code Jupyter cell markers (`# %%`).
@@ -98,15 +98,23 @@ a sidecar pickle, etc.).
 
 ## What the cell can contain
 
-The body of a cell must be a sequence of top-level simple assignments:
+The body of a cell must be a sequence of top-level simple assignments,
+annotated or not:
 
 ```python
 # %% kogine:config
 a = 1
 b = some_function()
 c = {"nested": [1, 2, 3]}
+lr: float = 1          # annotated: --set lr=0.5 is coerced to float
+steps: int             # annotation only: no default, set by an override
 # %% kogine:script
 ```
+
+Annotations drive override coercion exactly as for module-level names
+(see [Overrides and validation](overrides-and-validation.md#type-coercion)).
+An annotation-only name is declared (so `--strict` accepts it) but stays
+unbound unless an override supplies a value.
 
 Anything else inside the cell range — `if`, `for`, function calls used as
 statements — terminates the cell early and emits a warning.
@@ -163,6 +171,7 @@ from kohakuengine.engine import (
     has_cell,
     parse_cell,
     evaluate_cell,
+    evaluate_cell_schema,
     execute_with_cell,
 )
 ```

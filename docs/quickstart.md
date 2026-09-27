@@ -60,8 +60,11 @@ Script executed successfully
 ```
 
 `--set KEY=VALUE` overrides any module-level global in the script. Values
-arrive as strings and are coerced to the type of the script's default
-(`int`, `float`, `bool`, `str`), so `0.05` becomes a float.
+arrive as strings and are coerced to the type the script declares — the
+name's annotation (`learning_rate: float = 1`) or else its default's
+type — so `0.05` becomes a float. Lists, dicts, `Optional`, `Literal`,
+Enums, `Path`, and your own classes (via a `format_arg` classmethod) are
+supported; see [Type coercion](guides/overrides-and-validation.md#type-coercion).
 
 ## 4. Move the overrides to a config file
 

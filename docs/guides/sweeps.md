@@ -18,10 +18,21 @@ kogine run train.py --sweep learning_rate=0.001,0.01,0.1 --sweep batch_size=32,6
 ```
 
 Each `--sweep` flag introduces one axis. Multiple flags combine as a
-cartesian product. Values are strings on the wire; they are coerced to
-the type of the script's default (`int`, `float`, `bool`, `str`).
+cartesian product. Values are strings on the wire; each is coerced to
+the type the script declares for that name — its annotation, else its
+default's type (see [Type coercion](overrides-and-validation.md#type-coercion)).
 
 This expands to six runs.
+
+Values are split on commas **outside** brackets and quotes, so
+container values can be swept too:
+
+```bash
+kogine run train.py --sweep dims=[64,64],[128,128] --sweep name="'a,b'",c
+```
+
+`--sweep` combines with `--set` (applied to every run) and with a
+generator config file (every generated config × every sweep value).
 
 CLI sweeps run sequentially. To run them in parallel, write the sweep to
 a file and use a workflow (see below).

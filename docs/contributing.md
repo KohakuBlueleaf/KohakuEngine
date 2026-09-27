@@ -84,19 +84,26 @@ tests/
 ├── test_config/
 │   ├── test_base.py
 │   ├── test_generator.py
-│   └── test_loader.py
+│   ├── test_loader.py
+│   └── test_use_config.py
 ├── test_engine/
 │   ├── test_cell.py
 │   ├── test_coerce.py
+│   ├── test_coerce_value.py
 │   ├── test_entrypoint.py
 │   ├── test_executor.py
 │   ├── test_injector.py
 │   ├── test_introspect.py
+│   ├── test_schema.py
 │   └── test_script.py
-└── test_flow/
-    ├── test_flow.py
-    ├── test_parallel.py
-    └── test_sequential.py
+├── test_flow/
+│   ├── test_flow.py
+│   ├── test_parallel.py
+│   └── test_sequential.py
+└── test_overrides/
+    ├── conftest.py          # scripts that assert the types they receive
+    ├── test_layer.py
+    └── test_end_to_end.py
 ```
 
 Common commands:
@@ -193,7 +200,8 @@ Closes #42.
 
 Maintainers cut releases by:
 
-1. Bumping `[project] version` in `pyproject.toml`.
+1. Bumping `__version__` in `src/kohakuengine/__init__.py` (the single
+   source; `pyproject.toml` reads it as a dynamic version).
 2. Updating `docs/changelog.md`.
 3. Tagging the commit `vX.Y.Z` and pushing the tag.
 4. Building with `python -m build`.

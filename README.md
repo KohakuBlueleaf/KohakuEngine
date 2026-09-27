@@ -245,6 +245,24 @@ kogine config check script.py --config c.py # diff vs. script defaults, typo hin
 `kogine config check` is especially useful — it warns about overrides that
 don't match any script default (typos like `batch_sz` vs `batch_size`).
 
+### Typed overrides
+
+`--set` / `--sweep` strings are coerced to what the script declares — the
+name's annotation, else its default's type:
+
+```python
+lr: float = 1                    # --set lr=0.5        -> 0.5
+dims: list[int] = [64]           # --set dims=64,128   -> [64, 128]
+steps: Optional[int] = None      # --set steps=none    -> None
+mode: Mode = Mode.TRAIN          # --set mode=eval     -> Mode.EVAL
+dtype: Dtype = Dtype("fp32")     # --set dtype=bf16    -> Dtype.format_arg("bf16")
+out: Annotated[Path, FormatArg(lambda s: Path(s).expanduser())] = Path("runs")
+```
+
+A class opts in to custom parsing with a `format_arg` classmethod; any
+other type can attach a parser with `Annotated[T, FormatArg(fn)]`. See
+[Overrides and validation](docs/guides/overrides-and-validation.md#type-coercion).
+
 ---
 
 ## Python API
